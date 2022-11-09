@@ -1,0 +1,4 @@
+name = "Styx"
+uuid = "1d1fd4fa-9fa1-4023-a375-8a4fd56a3c55"
+authors = ["Haashim Shah <haashimhshah@gmail.com>"]
+version = "0.1.0"
