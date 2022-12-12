@@ -697,7 +697,7 @@ get_computational_descriptor(in_graph::Dict, out_graph::Dict, flow_sources::Set)
 end
 
 
-get_reachable_component(u::DataType, in_graph::Dict, out_graph::Dict)
+get_reachable_component(u::DataType, in_graph::Dict, out_graph::Dict) = begin
     # Setup
     stack = [u]
     in_graph_prime = Dict{DataType, Set{DataType}}()
