@@ -6,7 +6,7 @@ using DataStructures
 condition(x::Float64) = x > 500_000
 condition(::String) = error("Not Defined")
 
-s = FlowSource(rand(Int64), Int64)
+s = FlowSource(Int64)
 ema = SimpleEMA(s, 0.10)
 ma = SimpleMA(s, 10)
 t = (ema, ma);
@@ -33,3 +33,6 @@ end
 
 s = FlowSource(Int64)
 mdd = MaxDrawDown(s)
+
+
+

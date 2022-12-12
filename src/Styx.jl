@@ -4,129 +4,300 @@ module Styx
 using DataStructures
 using Base: Base.Order.Ordering, Base.Order.Forward, Base.Order.ForwardOrdering
 
+
+
 ################# node defs ################
 abstract type Node{V, S} end
 
+
 abstract type AbstractSource{ID, V, S} <: Node{V, S} end
+
 
 abstract type AbstractComputation{V, S} <: Node{V, S} end
 
-struct NoLink{T <: Node, V, S} <: Node{V, S} end
 
 struct FlowSource{ID, V} <: AbstractSource{ID, V, Missing} end
 
+
 struct NoFlowSource{ID, V} <: AbstractSource{ID, V, Missing} end
+
+
+struct NoLink{T <: Node, V, S} <: AbstractComputation{V, S} end
+
+
+struct AsyncGroupStart <: Node{Missing, Missing} end
+
+
+struct AsyncGroupEnd <: Node{Missing, Missing} end
+
+
+struct Async{T <: Node, V, S} <: AbstractComputation{V, S} end
+
+
+struct FieldSplitter{T <: Node, I, V} <: AbstractComputation{V, Missing} end
+
+
+struct Combine{T <: Tuple, V} <: AbstractComputation{V, Missing} end
+
 
 struct CumulativeSum{T <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
 
+
 struct CumulativeProduct{T <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
+
 
 struct Sum{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
 
+
 struct Difference{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
+
 
 struct Product{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
 
+
 struct Quotient{LHS <: Node{<:Real}, RHS <: Node{<:Real}} <: AbstractComputation{Float64, Missing} end
+
 
 struct Previous{T <: Node, V} <: AbstractComputation{V, V} end
 
+
 struct Buffer{T <: Node, Size, V} <: AbstractComputation{CircularBuffer{V}, V} end
+
 
 struct Collector{T <: Node, V} <: AbstractComputation{Vector{V}, Missing} end
 
+
 struct ConditionalCollector{T <: Node, U <: Function, V} <: AbstractComputation{Vector{V}, Missing} end
+
 
 struct SimpleMA{B <: Buffer{<:Node{<:Real}}, S} <: AbstractComputation{Float64, S} end
 
+
 struct SimpleEMA{T <: Node{<: Real}, Alpha} <: AbstractComputation{Float64, Missing} end
+
 
 struct Maximum{T <: Node, O <: Ordering, V} <: AbstractComputation{V, Missing} end
 
+
 struct Minimum{T <: Node, O <: Ordering, V} <: AbstractComputation{V, Missing} end
+
 
 struct Negative{T <: Node{<:Real}, V} <: AbstractComputation{V, Missing} end
 
+
 struct Abs{T <: Node{<:Real}, V} <: AbstractComputation{V, Missing} end
+
 
 struct Counter{T <: Node} <: AbstractComputation{Int64, Missing} end
 
-struct Pow{T <: Node{<:Real}, P} = AbstractComputation{Float64, Missing} end
+
+struct Pow{T <: Node{<:Real}, P} <: AbstractComputation{Float64, Missing} end
+
 
 
 ################# node constructors ################
-NoLink(::T) where T = NoLink{T, T |> valtype, T |> statetype}()
+const source_id_set = Set{Int64}(0)
 
-FlowSource(id::Int64, ::Type{V}) where V = FlowSource{id, V}()
+FlowSource(id::Int64, value_type::DataType) = FlowSource{id, value_type}()
 
-FlowSource(::Type{V}) where V = FlowSource(Int64 |> rand, V)
+FlowSource(value_type::DataType) = begin
+    r = 0
+    while r in source_id_set
+        r = rand(Int64)
+    end
+    FlowSource(r, value_type)
+end
 
-NoFlowSource(id::Int64, ::Type{V}) where V = NoFlowSource{id, V}()
 
-NoFlowSource(::Type{V}) where V = NoFlowSource(Int64 |> rand, V)
+NoFlowSource(id::Int64, value_type::DataType) = NoFlowSource{id, value_type}()
 
-CumulativeSum(::T) where T = CumulativeSum{T, T |> valtype}()
+NoFlowSource(value_type::DataType) = begin
+    r = 0
+    while r in source_id_set
+        r = rand(Int64)
+    end
+    NoFlowSource(r, value_type)
+end
 
-CumulativeProduct(::T) where T = CumulativeProduct{T, T |> valtype}()
 
-Sum(::LHS, ::RHS) where {LHS, RHS} = Sum{LHS, RHS, promote_type(LHS |> valtype, RHS |> valtype)}()
+NoLink(n::Node) = NoLink{n |> typeof, n |> valtype, n |> statetype}()
 
-Difference(::LHS, ::RHS) where {LHS, RHS} = Difference{LHS, RHS, promote_type(LHS |> valtype, RHS |> valtype)}()
 
-Product(::LHS, ::RHS) where {LHS, RHS} = Product{LHS, RHS, promote_type(LHS |> valtype, RHS |> valtype)}()
+Async(n::Node) = Async{n |> typeof, n |> valtype, n |> statetype}()
 
-Quotient(::LHS, ::RHS) where {LHS, RHS} = Quotient{LHS, RHS}()
 
-Previous(::T) where T = Previous{T, T |> valtype}()
+FieldSplitter(n::Node, i::Int64) = FieldSplitter{n |> typeof, i, (n |> valtype |> fieldtypes)[i]}()
 
-Delta(n::T) where T = Difference(n, Previous(n))
 
-Buffer(::T, size::Int64) where T = Buffer{T, size, T |> valtype}()
+Split(n::Node) = begin
+    output_type = n |> valtype
+    num_fields = output_type |> fieldcount
 
-Collector(::T) where T = Collector{T, T |> valtype}()
+    field_splitters = Vector{FieldSplitter}()
+    for i in 1:num_fields
+        push!(field_splitters, FieldSplitter(n, i))
+    end
 
-ConditionalCollector(::T, ::U) where {T, U} = ConditionalCollector{T, U, T |> valtype}()
+    tuple(field_splitters...)
+end
 
-SimpleMA(n::T, size::Int64) where T = SimpleMA{Buffer(n, size) |> typeof, T |> valtype}()
+Split(n::Node, symbols::Vararg) = begin
+    output_type = valtype(n)
+    field_names = fieldnames(output_type)
+    symbol_idxs = Vector{Int64}()
 
-SimpleEMA(::T, alpha::Float64) where T = SimpleEMA{T, alpha}()
+    # Find symbol idxs in order of symbols
+    for symbol in symbols
+        push!(symbol_idxs, findfirst(x -> x == symbol, field_names))
+    end
 
-Maximum(::T, ::O) where {T, O} = Maximum{T, O, T |> valtype}()
+    # Create field splitters 
+    field_splitters = Vector{FieldSplitter}()
+    for idx in symbol_idxs
+        push!(field_splitters, FieldSplitter(n, idx))
+    end
 
-Maximum(n::T) where T = Maximum(n, Forward)
+    tuple(field_splitters...)
+end
 
-Minimum(::T, ::O) where {T, O} = Minimum{T, O, T |> valtype}()
 
-Minimum(n::T) where T = Minimum(n, Forward)
+Combine(value_type::DataType, ns::Vararg) = Combine{ns |> typeof, value_type}()
 
-MaxDrawDown(n::T) where T <: Node{<:Real} = Maximum(
+
+CumulativeSum(n::Node) = CumulativeSum{n |> typeof, n |> valtype}()
+
+
+CumulativeProduct(n::Node) = CumulativeProduct{n |> typeof, n |> valtype}()
+
+
+Sum(lhs::Node, rhs::Node) = Sum{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
+
+
+Difference(lhs::Node, rhs::Node) = Difference{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
+
+
+Product(lhs::Node, rhs::Node) = Product{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
+
+
+Quotient(lhs::Node, rhs::Node) = Quotient{lhs |> typeof, rhs |> typeof}()
+
+
+Previous(n::Node) = Previous{n |> typeof, n |> valtype}()
+
+
+Delta(n::Node) = Difference(n, Previous(n))
+
+
+Buffer(n::Node, size::Int64) = Buffer{n |> typeof, size, n |> valtype}()
+
+
+Collector(n::Node) = Collector{n |> typeof, n |> valtype}()
+
+
+ConditionalCollector(n::Node, condition::Function) = ConditionalCollector{n |> typeof, condition |> typeof, n |> valtype}()
+
+
+SimpleMA(n::Node, size::Int64) = SimpleMA{Buffer(n, size) |> typeof, n |> valtype}()
+
+
+SimpleEMA(n::Node, alpha::Float64) = SimpleEMA{n |> typeof, alpha}()
+
+
+Maximum(n::Node, order::Ordering) = Maximum{n |> typeof, order |> typeof, n |> valtype}()
+
+Maximum(n::Node) = Maximum(n, Forward)
+
+
+Minimum(n::Node, order::Ordering) = Minimum{n |> typeof, order |> typeof, n |> valtype}()
+
+Minimum(n::Node) = Minimum(n, Forward)
+
+
+MaxDrawDown(n::Node) = Maximum(
     Difference(
         Maximum(n), 
         n
     )
 )
 
-Negative(::T) where T = Negative{T, T |> valtype}()
 
-Abs(::T) where T = Abs{T, T |> valtype}()
+Negative(n::Node) = Negative{n |> typeof, n |> valtype}()
 
-Counter(::T) where T = Counter{T}()
 
-Mean(n::T) where T <: Node{<:Real} = CumulativeSum(n) / Counter(n)
+Abs(n::Node) = Abs{n |> typeof, n |> valtype}()
 
-Square(n::T) where T = Product(n, n)
 
-Variance(n::T) where T <: Node{<:Real} = Mean(Square(n)) - Square(Mean(n))
+Counter(n::Node) = Counter{n |> typeof}()
 
-Pow(::T, p::Real) where T = Pow{T, p}()
 
-StdDev(n::T) where T <: Node{<:Real} = Pow(
+Mean(n::Node) = CumulativeSum(n) / Counter(n)
+
+
+Square(n::Node) = Product(n, n)
+
+
+Variance(n::Node) = Mean(Square(n)) - Square(Mean(n))
+
+
+Pow(n::Node, p::Real) = Pow{n |> typeof, p}()
+
+
+StdDev(n::Node) = Pow(
     Variance(n), 
     0.5
 )
 
 
+
 ################ node calcs ################
+calc(n::NoLink{T}) = begin
+    if is_val_init(T)
+        setval!(n, T |> getval)
+    end
+    if is_state_init(T)
+        setstate!(n, T |> getstate)
+    end
+    nothing
+end
+
+calc(n::Async{T}) = begin
+    calc(T())
+    if is_val_init(T)
+        setval!(n, T |> getval)
+    end
+    if is_state_init(T)
+        setstate!(n, T |> getstate)
+    end
+    nothing
+end
+
+calc(n::FieldSplitter{T, I}) where {T, I} = begin
+    if is_val_init(T)
+        val = T |> getval
+        setval!(n, getfield(val, I))
+    end
+    nothing
+end
+
+calc(n::Combine{T, V}) where {T, V} = begin
+    # Check that all dependencies are initialized
+    all_vals_init = true
+    for node_type in fieldtypes(T)
+        if !is_val_init(node_type)
+            all_vals_init = false
+            break
+        end
+    end
+
+    # Set value by calling the output type constructor with all dependency values
+    if all_vals_init
+        vals = map(getval, T |> fieldtypes)
+        setval!(n, V(vals...))
+    end
+
+    nothing
+end
+
 calc(n::CumulativeSum{T}) where T = begin
     if is_val_init(T)
         setval!(n, getval(n, zero(n |> valtype)) + getval(T))
@@ -319,6 +490,7 @@ calc(n::Pow{T, P}) where {T, P} = begin
 end
 
 
+
 ################ default values for types to keep type stability #################
 default(::Type{T}) where T <: Real = zero(T)
 
@@ -341,173 +513,287 @@ default(::Type{Char}) = '\0'
 default(::Type{T}) where T <: Function = T.instance
 
 
+
 ############### node type introspection valtype/statetype #################
 valtype(::Type{T}) where T <: Node{V, S} where {V, S} = V
 
-statetype(::Type{T}) where T <: Node{V, S} where {V, S} = S
-
 valtype(::Node{V, S}) where {V, S} = V
 
+
+statetype(::Type{T}) where T <: Node{V, S} where {V, S} = S
+
 statetype(::Node{V, S}) where {V, S} = S
+
+
+synctype(::Type{T}) where T <: Async{U} where U = U
+
+synctype(::Async{T}) where T = T
+
+
+sourceid(::Type{T}) where T <: AbstractSource{ID} where ID = ID
+
+sourceid(::AbstractSource{ID}) = ID
+
 
 
 ############## empty definitions of metaprogramming defined functions #################
 getsource(_) = error("Undefined method")
 
+
 setsource!(_, _) = error("Undefined method")
+
 
 getval(_) = error("Undefined method")
 
 getval(_, _) = error("Undefined method")
 
+
 setval!(_, _) = error("Undefined method")
+
 
 getstate(_) = error("Undefined method")
 
 getstate(_, _) = error("Undefined method")
 
+
 setstate!(_, _) = error("Undefined method")
+
 
 is_val_init(_) = error("Undefined method")
 
+
 is_state_init(_) = error("Undefined method")
+
 
 flow!(_, _) = error("Undefined method")
 
 
-##################### expanding and ordering nodes #######################
-expand_and_order_nodes(::Type{T}) where T <: Tuple = begin
-    expanded_type = T |> expand_nodes
-    in_graph, out_graph, sources = expanded_type |> init_type_graph
-    order_nodes(in_graph, out_graph, sources)
+
+##################### expanding and ordering nodes, manipulating the type based DAG #######################
+build_dag(node_types) = begin
+    # Get all types explicitly
+    expanded_types = node_types |> get_expanded_types
+
+    # Create graph structure and necessary metdata
+    in_graph, out_graph, flow_sources, no_flow_sources, async_nodes = expanded_types |> init_type_graph
+
+    # Edit the graph structure to account for async_nodes (remove the sync_nodes and replace with the async version)
+    reconnect_async_nodes!(in_graph, out_graph, async_nodes)
+
+    # Get the computational descriptor (a map from a flow_source to the sequence of nodes to execute)
+    comp_desc = get_computational_descriptor(in_graph, out_graph, flow_sources)
+
+    # Get the disconnected nodes that still need code generation (sync_nodes and no_flow_sources)
+    disconnected_nodes = get_disconnected_nodes(no_flow_sources, async_nodes)
+
+    # return 
+    comp_desc, disconnected_nodes
 end
 
-expand_nodes(::Type{T}) where T <: Tuple = begin
-    node_types = Set{DataType}()
-    for node_type in fieldtypes(T)
-        node_types = union!(node_types, expand_node(node_type))
+
+get_expanded_types(node_types) = begin
+    s = Set{DataType}()
+
+    for node_type in node_types
+        union!(s, node_type |> expand_type)
     end
-    Tuple{node_types...}
+
+    s
 end
 
-expand_node(::Type{T}) where T <: Node = begin
-    v = Vector{DataType}()
-    push!(v, T)
-    for type_param in T.parameters
-        if type_param isa Type && type_param <: Node 
-            push!(v, type_param)
-            append!(v, expand_node(type_param))
+
+expand_type(type::DataType) = begin
+    s = Set{DataType}()
+    
+    if type <: Node
+        for type_param in T.parameters
+            union!(s, type_param |> expand_type)
         end
+    elseif type <: Tuple
+        for field_type in fieldtypes(T)
+            union!(s, field_type |> expand_type)
+        end
+    else 
+        error("Invalid type: $type")
     end
-    v
+
+    s
 end
 
-init_type_graph(::Type{T}) where T <: Tuple = begin
-    in_graph = Dict(t => Set{DataType}() for t in fieldtypes(T))
-    out_graph = Dict(t => Set{DataType}() for t in fieldtypes(T))
-    sources = Set{DataType}()
-    for node_type in fieldtypes(T)
-        if node_type <: AbstractSource 
-            push!(sources, node_type) 
+expand_type(_) = Set{DataType}()
+
+
+init_type_graph(node_types::Vector) = begin
+    # Allocate outputs
+    in_graph = Dict(t => Set{DataType}() for t in node_types)
+    out_graph = Dict(t => Set{DataType}() for t in node_types)
+    flow_sources = Set{DataType}()
+    no_flow_sources = Set{DataType}()
+    async_nodes = Set{DataType}()
+
+    for node_type in node_types
+        # Push node_type to metadata if needed
+        if node_type <: FlowSource 
+            push!(flow_sources, node_type) 
+        elseif node_type <: NoFlowSource
+            push!(no_flow_sources, node_type)
+        elseif node_type <: Async
+            push!(async_nodes, node_type)
         end
+
+        # Create appropriate edges in in_graph and out_graph
         for type_param in node_type.parameters
-            if type_param isa Type && (type_param <: NoLink || type_param <: NoFlowSource)
-                continue
-            elseif type_param isa Type && type_param <: Node
-                push!(out_graph[type_param], node_type)
-                push!(in_graph[node_type], type_param)
-            end
+            connect_edges!(in_graph, out_graph, node_type, type_param)
         end
     end
-    in_graph, out_graph, sources
+
+    in_graph, out_graph, flow_sources, no_flow_sources, async_nodes
 end
 
-# Multi-source topological sort
-order_nodes(in_graph::Dict{DataType, Set{DataType}}, out_graph::Dict{DataType, Set{DataType}}, sources::Set{DataType}) = begin    
-    # Setup
-    top_sort_stacks = Dict(t => Vector{DataType}() for t in sources)
-    top_sorts = Dict(t => Vector{DataType}() for t in sources)
 
-    # Inititalize stacks
-    for source in sources
-        push!(top_sort_stacks[source], source)
+connect_edges!(in_graph::Dict, out_graph::Dict, node_type::DataType, type_param) = begin
+    if type_param isa DataType && (type_param <: NoLink || type_param <: NoFlowSource)
+        nothing
+    elseif type_param isa DataType && type_param <: Node
+        push!(out_graph[type_param], node_type)
+        push!(in_graph[node_type], type_param)
+    elseif type_param isa DataType && type_param <: Tuple
+        for field_type in fieldtypes(type_param)
+            connect_edges!(in_graph, out_graph, node_type, field_type)
+        end
     end
+
+    nothing
+end
+
+
+reconnect_async_nodes!(in_graph::Dict, out_graph::Dict, async_nodes::Set) = begin
+    for async_node in async_nodes
+        sync_node = async_node |> synctype
+        
+        length(out_graph[sync_node]) == 1 || error("node connected to synchronous version of an async node")
+        pop!(out_graph[sync_node])
+
+        in_graph[async_node] = in_graph[sync_node]
+        in_graph[sync_node] = Set{DataType}()
+
+        for node in in_graph[async_node]
+            pop!(out_graph[node], sync_node)
+            push!(out_graph[node], async_node)
+        end
+    end
+end
+
+
+get_computational_descriptor(in_graph::Dict, out_graph::Dict, flow_sources::Set) = begin
+    comp_desc = Dict{DataType, Vector{DataType}}()
+
+    for flow_source in flow_sources
+        in_graph_prime, out_graph_prime = get_reachable_component(in_graph, out_graph, flow_source)
+        push!(comp_desc, flow_source => topological_sort(in_graph_prime, out_graph_prime, flow_source))
+    end
+
+    comp_desc
+end
+
+
+get_reachable_component(u::DataType, in_graph::Dict, out_graph::Dict)
+    # Setup
+    stack = [u]
+    in_graph_prime = Dict{DataType, Set{DataType}}()
+    out_graph_prime = Dict{DataType, Set{DataType}}()
+    visited = Set{DataType}()
+    
+    # Run DFS
+    while !isempty(stack)
+        v = pop!(stack)
+        
+        if !(v in visited)
+            push!(visited, v)            
+            append!(stack, out_graph[v])
+        end
+    end
+
+    # Construct reachable component 
+    for v in visited
+        in_graph_prime[v] = intersect(in_graph[v], visited)
+        out_graph_prime[v] = out_graph[v]
+    end
+    
+    return in_graph_prime, out_graph_prime
+end
+
+
+topological_sort(in_graph::Dict, out_graph::Dict, source::DataType) = begin    
+    # Setup
+    stack = Vector{DataType}()
+    async_group = Vector{DataType}()
+    volatile_in_graph = deepcopy(in_graph)
+    top_sort = Vector{DataType}()
+
+    # Inititalize stack
+    push!(stack, source)
 
     # Run algorithm
-    while !all_empty(top_sort_stacks)
-        # Set up state to keep track of which touched nodes correspond to which source
-        touched_nodes = Dict(t => Vector{DataType}() for t in sources)
-        
-        # Add nodes to top_sorts and remove incoming edges on their neighbors
-        for source in sources 
-            stack = top_sort_stacks[source]
-            if !isempty(stack)
-                u = pop!(stack)
-                push!(top_sorts[source], u)
-                for v in out_graph[u]
-                    safe_pop!(in_graph[v], u)
-                    push!(touched_nodes[source], v)
-                end
-            end
-        end
+    while !isempty(stack) || !isempty(async_gropu)
+        if isempty(stack)
+            new_async_group = Vector{DataType}()
 
-        # Add nodes with zero degree to stacks of corresponding source 
-        for source in sources
-            for v in touched_nodes[source]
-                if isempty(in_graph[v])
-                    push!(top_sort_stacks[source], v)
-                end
+            push!(top_sort, AsyncGroupStart)
+
+            while !isempty(async_group)
+                update_top_sort!(top_sort, async_group, new_async_group, stack, volatile_in_graph, out_graph)
+            end
+
+            push!(top_sort, AsyncGroupEnd)
+
+            async_group = new_async_group
+        else
+            update_top_sort!(top_sort, stack, async_group, stack, volatile_in_graph, out_graph)
+        end
+    end
+
+    top_sort
+end
+
+
+update_top_sort!(top_sort::Vector, pop_stack::Vector, push_async_stack::Vector, push_stack::Vector, in_graph::Dict, out_graph::Dict) = begin
+    u = pop!(pop_stack)
+    push!(top_sort, u)
+    
+    for v in out_graph[u]
+        pop!(in_graph[v], u)
+        if isempty(in_graph[v])
+            if v <: Async
+                push!(push_async_stack, v)
+            else
+                push!(push_stack, v)
             end
         end
     end
 
-    # Return map of source types to ordered tuple type
-    Dict(t => Tuple{top_sorts[t]...} for t in sources)
+    nothing
 end
 
-all_empty(d::Dict) = begin
-    for v in values(d)
-        if !isempty(v) return false end
+
+get_disconnected_nodes(no_flow_sources::Set, async_nodes::Set) = begin
+    sync_nodes = Set{DataType}()
+    for async_node in async_nodes
+        push!(sync_nodes, async_node |> synctype)
     end
-    return true
-end
 
-safe_pop!(s::Set{T}, ele::T) where T = begin
-    ele in s ? pop!(s, ele) : ele
+    union(no_flow_sources, sync_nodes)
 end
 
 
-#################### hash types to string for use in metaprogramming variable names #####################
-node_type_to_str(::Type{T}) where T <: Node = begin
-    replace_left_brace = s -> replace(s, "{" => "_")
-    replace_right_brace = s -> replace(s, "}" => "_")
-    replace_comma = s -> replace(s, "," => "_")
-    replace_space = s -> replace(s, " " => "_")
-    replace_dot = s -> replace(s, "." => "_")
-    replace_left_paren = s -> replace(s, "(" => "_")
-    replace_right_paren = s -> replace(s, ")" => "_")
-    string(T) |> replace_left_brace |> replace_right_brace |> replace_comma |> replace_space |> replace_dot |> replace_left_paren |> replace_right_paren
-end
-
-node_tuple_type_to_str(::Type{T}) where T <: Tuple = begin
-    join(map(node_type_to_str, T |> fieldtypes), "__")
-end
-
-comp_desc_to_str(comp_desc::Dict{DataType, DataType}) = begin
-    join(map(node_tuple_type_to_str, [values(comp_desc)...]), "___")
-end
 
 ##################### implicitly generate required methods ########################
-generate_get_source(comp_desc::Dict{DataType, DataType}) = begin
-    global_flowing_source_var_name = Symbol("__source_", comp_desc |> comp_desc_to_str)
-    flow_source_types = [t for t in keys(comp_desc) if t <: FlowSource]
-    node_types = Set{DataType}()
-    for tuple_type in values(comp_desc)
-        node_types = union!(node_types, tuple_type |> fieldtypes)
-    end
-
+generate_getset_source(comp_desc::Dict{DataType, Vector{DataType}}, node_types::Set{DataType}) = begin
+    flow_source_types = [t for t in keys(comp_desc)]
+    global_flowing_source_var_name = gensym()
+    
     quote
-        const $global_flowing_source_var_name = Ref{Union{$(flow_source_types...)}}($((flow_source_types |> rand)()))
+        const $global_flowing_source_var_name = Ref{Union{$(flow_source_types...)}}($(flow_source_types |> rand)())
 
         getsource(::T) where T <: Union{$(node_types...)} = $global_flowing_source_var_name[]
 
@@ -536,139 +822,179 @@ generate_get_source(comp_desc::Dict{DataType, DataType}) = begin
     end |> eval
 end
 
-generate_lookups(::Type{T}) where T <: Tuple = begin
-    for node_type in T |> fieldtypes
-        str_node_type = node_type |> node_type_to_str
-        value_var_name = Symbol("__v_", str_node_type)
-        state_var_name = Symbol("__s_", str_node_type)
-        init_val_var_name = Symbol("__iv_", str_node_type)
-        init_state_var_name = Symbol("__is_", str_node_type)
-        
-        quote
-            const $value_var_name = Ref{$(node_type |> valtype)}($(node_type |> valtype |> default))
 
-            const $state_var_name = Ref{$(node_type |> statetype)}($(node_type |> statetype |> default))
+generate_getset_node(node_type::DataType) = begin
+    value_var_name = gensym()
+    state_var_name = gensym()
+    init_val_var_name = gensym()
+    init_state_var_name = gensym()
+    
+    quote
+        const $value_var_name = Ref{$(node_type |> valtype)}($(node_type |> valtype |> default))
 
-            const $init_val_var_name = Ref{Bool}(false)
+        const $state_var_name = Ref{$(node_type |> statetype)}($(node_type |> statetype |> default))
 
-            const $init_state_var_name = Ref{Bool}(false)
+        const $init_val_var_name = Ref{Bool}(false)
 
-            is_val_init(::$node_type) = $init_val_var_name[]
+        const $init_state_var_name = Ref{Bool}(false)
 
-            is_val_init(::Type{$node_type}) = $init_val_var_name[]
+        is_val_init(::$node_type) = $init_val_var_name[]
 
-            is_state_init(::$node_type) = $init_state_var_name[]
+        is_val_init(::Type{$node_type}) = $init_val_var_name[]
 
-            is_state_init(::Type{$node_type}) = $init_state_var_name[]
+        is_state_init(::$node_type) = $init_state_var_name[]
 
-            getval(::$node_type) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
-            getval(::Type{$node_type}) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        getval(::$node_type) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
 
-            getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        getval(::Type{$node_type}) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
 
-            getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
 
-            setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
-                $init_val_var_name[] = true
-                $value_var_name[] = new_val
-                nothing
-            end
+        getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
 
-            setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
-                $init_val_var_name[] = true
-                $value_var_name[] = new_val
-                nothing
-            end
+        setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
+            $init_val_var_name[] = true
+            $value_var_name[] = new_val
+            nothing
+        end
 
-            getstate(::$node_type) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
+            $init_val_var_name[] = true
+            $value_var_name[] = new_val
+            nothing
+        end
 
-            getstate(::Type{$node_type}) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        getstate(::$node_type) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
 
-            getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        getstate(::Type{$node_type}) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
 
-            getstate(::Type{$node_type}, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
 
-            setstate!(::$node_type, new_state::$(node_type |> statetype)) = begin
-                $init_state_var_name[] = true
-                $state_var_name[] = new_state
-                nothing
-            end
+        getstate(::Type{$node_type}, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
 
-            setstate!(::Type{$node_type}, new_state::$(node_type |> statetype)) = begin
-                $init_state_var_name[] = true
-                $state_var_name[] = new_state
-                nothing
-            end
+        setstate!(::$node_type, new_state::$(node_type |> statetype)) = begin
+            $init_state_var_name[] = true
+            $state_var_name[] = new_state
+            nothing
+        end
 
-        end |> eval
-    end
+        setstate!(::Type{$node_type}, new_state::$(node_type |> statetype)) = begin
+            $init_state_var_name[] = true
+            $state_var_name[] = new_state
+            nothing
+        end
+
+    end |> eval
 end
 
-unroll_computation(::Type{T}) where T <: Tuple = begin
-    v = Vector{Expr}()
-    for node_type in (T |> fieldtypes)[2:end]
+wait_on_futures(future_var_names::Vector{Symbol}) = begin
+    v = Vector{Expr}
+
+    for var_name in future_var_names
         expr = quote
-            node = $node_type()
-            calc(node)
+            wait($var_name)
         end
         push!(v, expr)
     end
+
     Expr(:block, v...)
 end
 
-generate_flow(::Type{T}, ::Type{U}) where T <: FlowSource where U <: Tuple = begin
-    quote 
-        flow!(source::$T, val::$(T |> valtype)) = begin
-            setsource!(source, source)
-            setval!(source, val)
-            $(U |> unroll_computation)
+
+unroll_computation(top_sort::Vector{DataType}) = begin
+    v = Vector{Expr}()
+    future_var_names = Vector{Symbol}()
+
+    for (i, node_type) in enumerate(top_sort[2:end])
+        if node_type <: AsyncGroupStart
             nothing
+        elseif node_type <: AsyncGroupEnd
+            expr = future_var_names |> wait_on_futures
+            empty!(future_var_names)
+        elseif node_type <: Async
+            future_var_name = gensym()
+            push!(future_var_names, future_var_name)
+
+            expr = quote
+                $future_var_name = Threads.@spawn calc($node_type())
+            end
+        else
+            expr = quote
+                calc($node_type())
+            end
         end
 
-        flow!(source::Type{$T}, val::$(T |> valtype)) = begin
-            setsource!(source, source)
-            setval!(source, val)
-            $(U |> unroll_computation)
-            nothing
-        end
-    end |> eval
-end
-
-generate_flow(::Type{T}, ::Type{U}) where T <: NoFlowSource where U <: Tuple = begin
-    quote 
-        flow!(source::$T, _) = begin
-            error("Cannot flow into a NoFlowSource: ", source)
-        end
-
-        flow!(source::Type{$T}, _) = begin
-            error("Cannot flow into a NoFlowSource: ", source)
-        end
-    end |> eval
-end
-
-generate_code(comp_desc::Dict{DataType, DataType}) = begin
-    comp_desc |> generate_get_source
-    for (source_type, tuple_type) in comp_desc
-        tuple_type |> generate_lookups
-        generate_flow(source_type, tuple_type)
+        push!(v, expr)
     end
+    
+    Expr(:block, v...)
+end
+
+
+generate_flow(source_type::DataType, top_sort::Vector{DataType}) = begin
+    quote 
+        flow!(source::$source_type, val::$(source_type |> valtype)) = begin
+            setsource!(source, source)
+            setval!(source, val)
+            $(top_sort |> unroll_computation)
+            nothing
+        end
+
+        flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
+            setsource!(source, source)
+            setval!(source, val)
+            $(top_sort |> unroll_computation)
+            nothing
+        end
+    end |> eval
+end
+
+
+generate_code(comp_desc::Dict{DataType, Vector{DataType}}, disconnected_nodes::Set{DataType}) = begin
+    node_types = comp_desc |> comp_desc_to_node_type_set
+
+    generate_getset_source(comp_desc, node_types)
+
+    for node_type in union(node_types, disconnected_nodes)
+        generate_getset_node(node_type)
+    end
+
+    for (source_type, top_sort) in comp_desc
+        generate_flow(source_type, top_sort)
+    end
+
     nothing
 end
+
+
+comp_desc_to_node_type_set(comp_desc::Dict) = begin
+    node_types = Set{DataType}()
+    
+    for node_type_vector in values(comp_desc)
+        # Don't include AsyncGroupStart/End
+        union!(node_types, [node_type for node_type in node_type_vector if node_type <: Union{AbstractComputation, FlowSource}])
+    end
+    
+    node_types
+end
+
 
 materialize(nodes) = begin
-    nodes = map(nodes) do n
-        if n isa Node
-            n
-        elseif n <: Node
-            n()
+    node_types = map(nodes) do n
+        if n isa Node || n isa Tuple
+            n |> typeof
         else
-            error("invalid argument: ", n)
+            error("invalid argument: $n")
         end
     end
-    comp_desc = nodes |> typeof |> expand_and_order_nodes
-    comp_desc |> generate_code
+
+    comp_desc, disconnected_nodes = build_dag(node_types)
+    generate_code(comp_desc, disconnected_nodes)
+
     nothing
 end
+
 
 end
