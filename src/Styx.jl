@@ -105,6 +105,7 @@ FlowSource(value_type::DataType) = begin
     while r in source_id_set
         r = rand(Int64)
     end
+    push!(source_id_set, r)
     FlowSource(r, value_type)
 end
 
@@ -116,6 +117,7 @@ NoFlowSource(value_type::DataType) = begin
     while r in source_id_set
         r = rand(Int64)
     end
+    push!(source_id_set, r)
     NoFlowSource(r, value_type)
 end
 
@@ -250,7 +252,7 @@ StdDev(n::Node) = Pow(
 
 
 ################ node calcs ################
-calc(n::NoLink{T}) = begin
+calc(n::NoLink{T}) where T = begin
     if is_val_init(T)
         setval!(n, T |> getval)
     end
@@ -260,7 +262,7 @@ calc(n::NoLink{T}) = begin
     nothing
 end
 
-calc(n::Async{T}) = begin
+calc(n::Async{T}) where T = begin
     calc(T())
     if is_val_init(T)
         setval!(n, T |> getval)
@@ -532,7 +534,7 @@ synctype(::Async{T}) where T = T
 
 sourceid(::Type{T}) where T <: AbstractSource{ID} where ID = ID
 
-sourceid(::AbstractSource{ID}) = ID
+sourceid(::AbstractSource{ID}) where ID = ID
 
 
 
@@ -606,7 +608,8 @@ expand_type(type::DataType) = begin
     s = Set{DataType}()
     
     if type <: Node
-        for type_param in T.parameters
+        push!(s, type)
+        for type_param in type.parameters
             union!(s, type_param |> expand_type)
         end
     elseif type <: Tuple
@@ -614,16 +617,16 @@ expand_type(type::DataType) = begin
             union!(s, field_type |> expand_type)
         end
     else 
-        error("Invalid type: $type")
+        nothing
     end
 
     s
 end
 
-expand_type(_) = Set{DataType}()
+expand_type(_) = Set{DataType}() # Handles value type parameters
 
 
-init_type_graph(node_types::Vector) = begin
+init_type_graph(node_types::Set{DataType}) = begin
     # Allocate outputs
     in_graph = Dict(t => Set{DataType}() for t in node_types)
     out_graph = Dict(t => Set{DataType}() for t in node_types)
@@ -689,8 +692,8 @@ get_computational_descriptor(in_graph::Dict, out_graph::Dict, flow_sources::Set)
     comp_desc = Dict{DataType, Vector{DataType}}()
 
     for flow_source in flow_sources
-        in_graph_prime, out_graph_prime = get_reachable_component(in_graph, out_graph, flow_source)
-        push!(comp_desc, flow_source => topological_sort(in_graph_prime, out_graph_prime, flow_source))
+        in_graph_prime, out_graph_prime = get_reachable_component(flow_source, in_graph, out_graph)
+        push!(comp_desc, flow_source => topological_sort(flow_source, in_graph_prime, out_graph_prime))
     end
 
     comp_desc
@@ -724,7 +727,7 @@ get_reachable_component(u::DataType, in_graph::Dict, out_graph::Dict) = begin
 end
 
 
-topological_sort(in_graph::Dict, out_graph::Dict, source::DataType) = begin    
+topological_sort(source::DataType, in_graph::Dict, out_graph::Dict) = begin    
     # Setup
     stack = Vector{DataType}()
     async_group = Vector{DataType}()
@@ -735,7 +738,7 @@ topological_sort(in_graph::Dict, out_graph::Dict, source::DataType) = begin
     push!(stack, source)
 
     # Run algorithm
-    while !isempty(stack) || !isempty(async_gropu)
+    while !isempty(stack) || !isempty(async_group)
         if isempty(stack)
             new_async_group = Vector{DataType}()
 
@@ -890,7 +893,7 @@ generate_getset_node(node_type::DataType) = begin
 end
 
 wait_on_futures(future_var_names::Vector{Symbol}) = begin
-    v = Vector{Expr}
+    v = Vector{Expr}()
 
     for var_name in future_var_names
         expr = quote
@@ -907,9 +910,9 @@ unroll_computation(top_sort::Vector{DataType}) = begin
     v = Vector{Expr}()
     future_var_names = Vector{Symbol}()
 
-    for (i, node_type) in enumerate(top_sort[2:end])
+    for node_type in top_sort[2:end]
         if node_type <: AsyncGroupStart
-            nothing
+            expr = :()
         elseif node_type <: AsyncGroupEnd
             expr = future_var_names |> wait_on_futures
             empty!(future_var_names)
