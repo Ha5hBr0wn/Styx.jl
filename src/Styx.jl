@@ -46,7 +46,7 @@ struct CumulativeSum{T <: Node, V} <: AbstractComputation{V, Missing} end
 struct CumulativeProduct{T <: Node, V} <: AbstractComputation{V, Missing} end
 
 
-struct Sum{LHS <: Node, RHS <: Node, V} <: AbstractComputation{V, Missing} end
+struct Sum{T <: Tuple, V} <: AbstractComputation{V, Missing} end
 
 
 struct Difference{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
@@ -172,9 +172,9 @@ CumulativeSum(n::Node) = CumulativeSum{n |> typeof, n |> valtype}()
 CumulativeProduct(n::Node) = CumulativeProduct{n |> typeof, n |> valtype}()
 
 
-Sum(lhs::Node, rhs::Node) = Sum{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
+Sum(ns::Vararg) = Sum{ns |> typeof, promote_type(map(valtype, ns)...)}()
 
-Sum(lhs::Node, rhs::Node, output_type::DataType) = Sum{lhs |> typeof, rhs |> typeof, output_type}()
+Sum(output_type::DataType, ns::Vararg) = Sum{ns |> typeof, output_type}()
 
 
 Difference(lhs::Node, rhs::Node) = Difference{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
@@ -315,9 +315,9 @@ end
     nothing
 end
 
-@inline calc(n::Sum{LHS, RHS}) where {LHS, RHS} = begin
-    if is_val_init(LHS) && is_val_init(RHS)
-        setval!(n, getval(LHS) + getval(RHS))
+@inline calc(n::Sum{T}) where T = begin
+    if all_vals_init(T)
+        setval!(n, sum(T |> getvals))
     end
     nothing
 end

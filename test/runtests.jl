@@ -234,5 +234,5 @@ items2 = rand(Float64, N)
 items = [i for i in zip(items1, items2)]
 
 # Benchmark
-@time flow_all_items!(fs, items) # 7ms
-@time control_sum_benchmark(items); # 5ms
+@btime flow_all_items!(fs, items) # 7ms
+@btime control_sum_benchmark(items); # 5ms
