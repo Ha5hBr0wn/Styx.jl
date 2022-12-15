@@ -495,41 +495,59 @@ end
 
 
 ################### calc helpers ##################
-@inline all_vals_init(::Type{T}) where T <: Tuple = begin
-    all_vals_init = true
+@generated all_vals_init(::Type{T}) where T <: Tuple = begin
+    v = Vector{Expr}()
     
     for node_type in fieldtypes(T)
-        if !is_val_init(node_type)
-            all_vals_init = false
-            break
+        e = quote
+            if !is_val_init($node_type) return false end
         end
+
+        push!(v, e)
     end
 
-    all_vals_init
+    push!(v, :(return true))
+
+    Expr(:block, v...)
 end
 
 
-@inline all_states_init(::Type{T}) where T <: Tuple = begin
-    all_vals_init = true
+@generated all_states_init(::Type{T}) where T <: Tuple = begin
+    v = Vector{Expr}()
     
     for node_type in fieldtypes(T)
-        if !is_state_init(node_type)
-            all_vals_init = false
-            break
+        e = quote
+            if !is_state_init($node_type) return false end
         end
+
+        push!(v, e)
     end
 
-    all_vals_init
+    push!(v, :(return true))
+
+    Expr(:block, v...)
 end
 
 
-@inline getvals(::Type{T}) where T <: Tuple = begin
-    map(getval, T |> fieldtypes)
+@generated getvals(::Type{T}) where T <: Tuple = begin
+    v = Vector{Expr}()
+
+    for node_type in fieldtypes(T)
+        push!(v, :($node_type |> getval))
+    end
+
+    Expr(:tuple, v...)
 end
 
 
-@inline getstates(::Type{T}) where T <: Tuple = begin
-    map(getstate, T |> fieldtypes)
+@generated getstates(::Type{T}) where T <: Tuple = begin
+    v = Vector{Expr}()
+
+    for node_type in fieldtypes(T)
+        push!(v, :($node_type |> getstate))
+    end
+
+    Expr(:tuple, v...)
 end
 
 

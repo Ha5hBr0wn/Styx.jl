@@ -25,11 +25,7 @@ Base.:+(x::RealBox{Int32}, y::RealBox{Float32}) = RealBox{Float16}(x.a + y.a)
 Base.:*(x::RealBox{Int32}, y::RealBox{Float32}) = RealBox{Float16}(x.a * y.a)
 
 
-flow_all_items!(s::FlowSource, items::Vector{T}) where T = begin
-    for item in items
-        flow!(s, item)
-    end
-end
+
 
 
 ##################### Node Test Sets ##########################
@@ -205,22 +201,12 @@ end
 
 
 ##################### Node Benchmark Sets ##########################
-# s = FlowSource(Tuple{Int64, Float64, Float32})
-# x, y, z = Split(s)
-# su = Sum(x, Sum(y, z))
 
-# materialize(su)
 
-# N = 1_000_000
-# items1 = rand(Int64, N)
-# items2 = rand(Float64, N)
-# items3 = rand(Float32, N)
-# items = Vector{Tuple{Int64, Float64, Float32}}()
-# for i in 1:N
-#     push!(items, (items1[i], items2[i], items3[i]))
-# end
 
-control_sum_benchmark(items::Vector{Tuple{Int64, Float64}}) = begin
+
+# Control
+control_sum_benchmark(items) = begin
     v = Vector{Float64}()
     for item in items
         push!(v, item[1] + item[2])
@@ -228,22 +214,25 @@ control_sum_benchmark(items::Vector{Tuple{Int64, Float64}}) = begin
     v
 end
 
-# @btime flow_all_items!(s, items)
-# @btime control_sum_benchmark(items)
-
-
+# Experiment
 fs = FlowSource(Tuple{Int64, Float64})
 x, y = Split(fs)
 s = Sum(x, y)
-cs = Combine(Tuple{Int64, Float64}, x, y)
 c = Collector(s)
+materialize(c)
 
-materialize([c, cs])
+flow_all_items!(s, items) = begin
+    for item in items
+        flow!(s, item)
+    end
+end
 
+# Setup
 N = 1_000_000
 items1 = rand(Int64, N)
-items2 = rand([10.0], N)
+items2 = rand(Float64, N)
 items = [i for i in zip(items1, items2)]
 
-@btime flow_all_items!(fs, items)
-@btime control_sum_benchmark(items);
+# Benchmark
+@time flow_all_items!(fs, items) # 7ms
+@time control_sum_benchmark(items); # 5ms
