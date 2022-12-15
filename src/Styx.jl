@@ -40,13 +40,13 @@ struct FieldSplitter{T <: Node, I, V} <: AbstractComputation{V, Missing} end
 struct Combine{T <: Tuple, V} <: AbstractComputation{V, Missing} end
 
 
-struct CumulativeSum{T <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
+struct CumulativeSum{T <: Node, V} <: AbstractComputation{V, Missing} end
 
 
-struct CumulativeProduct{T <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
+struct CumulativeProduct{T <: Node, V} <: AbstractComputation{V, Missing} end
 
 
-struct Sum{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
+struct Sum{LHS <: Node, RHS <: Node, V} <: AbstractComputation{V, Missing} end
 
 
 struct Difference{LHS <: Node{<:Real}, RHS <: Node{<:Real}, V <: Real} <: AbstractComputation{V, Missing} end
@@ -174,6 +174,8 @@ CumulativeProduct(n::Node) = CumulativeProduct{n |> typeof, n |> valtype}()
 
 Sum(lhs::Node, rhs::Node) = Sum{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
 
+Sum(lhs::Node, rhs::Node, output_type::DataType) = Sum{lhs |> typeof, rhs |> typeof, output_type}()
+
 
 Difference(lhs::Node, rhs::Node) = Difference{lhs |> typeof, rhs |> typeof, promote_type(lhs |> valtype, rhs |> valtype)}()
 
@@ -252,7 +254,7 @@ StdDev(n::Node) = Pow(
 
 
 ################ node calcs ################
-calc(n::NoLink{T}) where T = begin
+@inline calc(n::NoLink{T}) where T = begin
     if is_val_init(T)
         setval!(n, T |> getval)
     end
@@ -262,7 +264,7 @@ calc(n::NoLink{T}) where T = begin
     nothing
 end
 
-calc(n::Async{T}) where T = begin
+@inline calc(n::Async{T}) where T = begin
     calc(T())
     if is_val_init(T)
         setval!(n, T |> getval)
@@ -273,7 +275,7 @@ calc(n::Async{T}) where T = begin
     nothing
 end
 
-calc(n::FieldSplitter{T, I}) where {T, I} = begin
+@inline calc(n::FieldSplitter{T, I}) where {T, I} = begin
     if is_val_init(T)
         val = T |> getval
         setval!(n, getfield(val, I))
@@ -281,68 +283,67 @@ calc(n::FieldSplitter{T, I}) where {T, I} = begin
     nothing
 end
 
-calc(n::Combine{T, V}) where {T, V} = begin
-    # Check that all dependencies are initialized
-    all_vals_init = true
-    for node_type in fieldtypes(T)
-        if !is_val_init(node_type)
-            all_vals_init = false
-            break
-        end
-    end
-
+@inline calc(n::Combine{T, V}) where {T, V} = begin
     # Set value by calling the output type constructor with all dependency values
-    if all_vals_init
-        vals = map(getval, T |> fieldtypes)
+    if all_vals_init(T)
+        vals = getvals(T)
         setval!(n, V(vals...))
     end
 
     nothing
 end
 
-calc(n::CumulativeSum{T}) where T = begin
+@inline calc(n::Combine{T, V}) where {T, V <: Tuple} = begin
+    if all_vals_init(T)
+        setval!(n, T |> getvals)
+    end
+
+    nothing
+end
+
+@inline calc(n::CumulativeSum{T}) where T = begin
     if is_val_init(T)
         setval!(n, getval(n, zero(n |> valtype)) + getval(T))
     end
     nothing
 end
 
-calc(n::CumulativeProduct{T}) where T = begin
+@inline calc(n::CumulativeProduct{T}) where T = begin
     if is_val_init(T)
         setval!(n, getval(n, one(n |> valtype)) * getval(T))
     end
     nothing
 end
 
-calc(n::Sum{LHS, RHS}) where {LHS, RHS} = begin
+@inline calc(n::Sum{LHS, RHS}) where {LHS, RHS} = begin
     if is_val_init(LHS) && is_val_init(RHS)
         setval!(n, getval(LHS) + getval(RHS))
     end
     nothing
 end
 
-calc(n::Difference{LHS, RHS}) where {LHS, RHS} = begin
+@inline calc(n::Difference{LHS, RHS}) where {LHS, RHS} = begin
     if is_val_init(LHS) && is_val_init(RHS)
         setval!(n, getval(LHS) - getval(RHS))
     end
     nothing
 end
 
-calc(n::Product{LHS, RHS}) where {LHS, RHS} = begin
+@inline calc(n::Product{LHS, RHS}) where {LHS, RHS} = begin
     if is_val_init(LHS) && is_val_init(RHS)
         setval!(n, getval(LHS) * getval(RHS))
     end
     nothing
 end
 
-calc(n::Quotient{LHS, RHS}) where {LHS, RHS} = begin
+@inline calc(n::Quotient{LHS, RHS}) where {LHS, RHS} = begin
     if is_val_init(LHS) && is_val_init(RHS)
         setval!(n, getval(LHS) / getval(RHS))
     end
     nothing
 end
 
-calc(n::Previous{T}) where T = begin
+@inline calc(n::Previous{T}) where T = begin
     if is_val_init(T) && !is_state_init(n)
         current_val = T |> getval
         setstate!(n, current_val)
@@ -355,7 +356,7 @@ calc(n::Previous{T}) where T = begin
     nothing
 end
 
-calc(n::Buffer{T, Size}) where {T, Size} = begin
+@inline calc(n::Buffer{T, Size}) where {T, Size} = begin
     if !is_val_init(n) && is_val_init(T)
         buffer = (n |> valtype)(Size)
         setval!(n, buffer)
@@ -372,7 +373,7 @@ calc(n::Buffer{T, Size}) where {T, Size} = begin
     nothing
 end
 
-calc(n::Collector{T}) where T = begin
+@inline calc(n::Collector{T}) where T = begin
     if !is_val_init(n) && is_val_init(T)
         setval!(n, (n |> valtype)())
     end
@@ -385,7 +386,7 @@ calc(n::Collector{T}) where T = begin
     nothing
 end
 
-calc(n::ConditionalCollector{T, U}) where {T, U} = begin
+@inline calc(n::ConditionalCollector{T, U}) where {T, U} = begin
     if !is_val_init(n) && is_val_init(T)
         setval!(n, (n |> valtype)())
     end
@@ -401,7 +402,7 @@ calc(n::ConditionalCollector{T, U}) where {T, U} = begin
     nothing
 end
 
-calc(n::SimpleMA{B}) where B <: Buffer{T, Size} where {T, Size} = begin
+@inline calc(n::SimpleMA{B}) where B <: Buffer{T, Size} where {T, Size} = begin
     if is_val_init(T) && is_state_init(B)
         sum = getstate(n, n |> statetype |> zero)
         next_val = T |> getval
@@ -420,7 +421,7 @@ calc(n::SimpleMA{B}) where B <: Buffer{T, Size} where {T, Size} = begin
     nothing
 end
 
-calc(n::SimpleEMA{T, Alpha}) where {T, Alpha} = begin
+@inline calc(n::SimpleEMA{T, Alpha}) where {T, Alpha} = begin
     if is_val_init(T)
         ema = getval(n, 0.0)
         next_val = T |> getval
@@ -430,7 +431,7 @@ calc(n::SimpleEMA{T, Alpha}) where {T, Alpha} = begin
     nothing
 end
 
-calc(n::Maximum{T, O}) where {T, O} = begin
+@inline calc(n::Maximum{T, O}) where {T, O} = begin
     if !is_val_init(n) && is_val_init(T)
         val = T |> getval
         setval!(n, val)
@@ -444,7 +445,7 @@ calc(n::Maximum{T, O}) where {T, O} = begin
     nothing
 end
 
-calc(n::Minimum{T, O}) where {T, O} = begin
+@inline calc(n::Minimum{T, O}) where {T, O} = begin
     if !is_val_init(n) && is_val_init(T)
         val = T |> getval
         setval!(n, val)
@@ -458,7 +459,7 @@ calc(n::Minimum{T, O}) where {T, O} = begin
     nothing
 end
 
-calc(n::Negative{T}) where T = begin
+@inline calc(n::Negative{T}) where T = begin
     if is_val_init(T)
         val = T |> getval
         setval!(n, -val)
@@ -466,14 +467,14 @@ calc(n::Negative{T}) where T = begin
     nothing
 end
 
-calc(n::Abs{T}) where T = begin
+@inline calc(n::Abs{T}) where T = begin
     if is_val_init(T)
         setval!(n, T |> getval |> abs)
     end
     nothing
 end
 
-calc(n::Counter{T}) where T = begin
+@inline calc(n::Counter{T}) where T = begin
     if !is_val_init(n) && is_val_init(T)
         setval!(n, 1)
     elseif is_val_init(T)
@@ -482,7 +483,7 @@ calc(n::Counter{T}) where T = begin
     nothing
 end
 
-calc(n::Pow{T, P}) where {T, P} = begin
+@inline calc(n::Pow{T, P}) where {T, P} = begin
     if is_val_init(T)
         val = T |> getval
         pow = convert(Float64, val^P)
@@ -491,6 +492,45 @@ calc(n::Pow{T, P}) where {T, P} = begin
     nothing
 end
 
+
+
+################### calc helpers ##################
+@inline all_vals_init(::Type{T}) where T <: Tuple = begin
+    all_vals_init = true
+    
+    for node_type in fieldtypes(T)
+        if !is_val_init(node_type)
+            all_vals_init = false
+            break
+        end
+    end
+
+    all_vals_init
+end
+
+
+@inline all_states_init(::Type{T}) where T <: Tuple = begin
+    all_vals_init = true
+    
+    for node_type in fieldtypes(T)
+        if !is_state_init(node_type)
+            all_vals_init = false
+            break
+        end
+    end
+
+    all_vals_init
+end
+
+
+@inline getvals(::Type{T}) where T <: Tuple = begin
+    map(getval, T |> fieldtypes)
+end
+
+
+@inline getstates(::Type{T}) where T <: Tuple = begin
+    map(getstate, T |> fieldtypes)
+end
 
 
 ################ default values for types to keep type stability #################
@@ -514,60 +554,62 @@ default(::Type{Char}) = '\0'
 
 default(::Type{T}) where T <: Function = T.instance
 
+default(::Type{T}) where T = T()
+
 
 
 ############### node type introspection valtype/statetype #################
-valtype(::Type{T}) where T <: Node{V, S} where {V, S} = V
+@inline valtype(::Type{T}) where T <: Node{V, S} where {V, S} = V
 
-valtype(::Node{V, S}) where {V, S} = V
-
-
-statetype(::Type{T}) where T <: Node{V, S} where {V, S} = S
-
-statetype(::Node{V, S}) where {V, S} = S
+@inline valtype(::Node{V, S}) where {V, S} = V
 
 
-synctype(::Type{T}) where T <: Async{U} where U = U
+@inline statetype(::Type{T}) where T <: Node{V, S} where {V, S} = S
 
-synctype(::Async{T}) where T = T
+@inline statetype(::Node{V, S}) where {V, S} = S
 
 
-sourceid(::Type{T}) where T <: AbstractSource{ID} where ID = ID
+@inline synctype(::Type{T}) where T <: Async{U} where U = U
 
-sourceid(::AbstractSource{ID}) where ID = ID
+@inline synctype(::Async{T}) where T = T
+
+
+@inline sourceid(::Type{T}) where T <: AbstractSource{ID} where ID = ID
+
+@inline sourceid(::AbstractSource{ID}) where ID = ID
 
 
 
 ############## empty definitions of metaprogramming defined functions #################
-getsource(_) = error("Undefined method")
+@inline getsource(_) = error("Undefined method")
 
 
-setsource!(_, _) = error("Undefined method")
+@inline setsource!(_, _) = error("Undefined method")
 
 
-getval(_) = error("Undefined method")
+@inline getval(_) = error("Undefined method")
 
-getval(_, _) = error("Undefined method")
-
-
-setval!(_, _) = error("Undefined method")
+@inline getval(_, _) = error("Undefined method")
 
 
-getstate(_) = error("Undefined method")
-
-getstate(_, _) = error("Undefined method")
+@inline setval!(_, _) = error("Undefined method")
 
 
-setstate!(_, _) = error("Undefined method")
+@inline getstate(_) = error("Undefined method")
+
+@inline getstate(_, _) = error("Undefined method")
 
 
-is_val_init(_) = error("Undefined method")
+@inline setstate!(_, _) = error("Undefined method")
 
 
-is_state_init(_) = error("Undefined method")
+@inline is_val_init(_) = error("Undefined method")
 
 
-flow!(_, _) = error("Undefined method")
+@inline is_state_init(_) = error("Undefined method")
+
+
+@inline flow!(_, _) = error("Undefined method")
 
 
 
@@ -613,7 +655,7 @@ expand_type(type::DataType) = begin
             union!(s, type_param |> expand_type)
         end
     elseif type <: Tuple
-        for field_type in fieldtypes(T)
+        for field_type in fieldtypes(type)
             union!(s, field_type |> expand_type)
         end
     else 
@@ -798,26 +840,26 @@ generate_getset_source(comp_desc::Dict{DataType, Vector{DataType}}, node_types::
     quote
         const $global_flowing_source_var_name = Ref{Union{$(flow_source_types...)}}($(flow_source_types |> rand)())
 
-        getsource(::T) where T <: Union{$(node_types...)} = $global_flowing_source_var_name[]
+        @inline getsource(::T) where T <: Union{$(node_types...)} = $global_flowing_source_var_name[]
 
-        getsource(::Type{T}) where T <: Union{$(node_types)...} = $global_flowing_source_var_name[]
+        @inline getsource(::Type{T}) where T <: Union{$(node_types)...} = $global_flowing_source_var_name[]
 
-        setsource!(::T, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
+        @inline setsource!(::T, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
             $global_flowing_source_var_name[] = s
             nothing
         end
 
-        setsource!(::Type{T}, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
+        @inline setsource!(::Type{T}, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
             $global_flowing_source_var_name[] = s
             nothing
         end
 
-        setsource!(::T, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
+        @inline setsource!(::T, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
             $global_flowing_source_var_name[] = U()
             nothing
         end 
 
-        setsource!(::Type{T}, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
+        @inline setsource!(::Type{T}, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
             $global_flowing_source_var_name[] = U()
             nothing
         end
@@ -841,49 +883,49 @@ generate_getset_node(node_type::DataType) = begin
 
         const $init_state_var_name = Ref{Bool}(false)
 
-        is_val_init(::$node_type) = $init_val_var_name[]
+        @inline is_val_init(::$node_type) = $init_val_var_name[]
 
-        is_val_init(::Type{$node_type}) = $init_val_var_name[]
+        @inline is_val_init(::Type{$node_type}) = $init_val_var_name[]
 
-        is_state_init(::$node_type) = $init_state_var_name[]
+        @inline is_state_init(::$node_type) = $init_state_var_name[]
 
-        is_state_init(::Type{$node_type}) = $init_state_var_name[]
+        @inline is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
-        getval(::$node_type) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        @inline getval(::$node_type) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
 
-        getval(::Type{$node_type}) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        @inline getval(::Type{$node_type}) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
 
-        getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        @inline getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
 
-        getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        @inline getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
 
-        setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
+        @inline setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
             $init_val_var_name[] = true
             $value_var_name[] = new_val
             nothing
         end
 
-        setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
+        @inline setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
             $init_val_var_name[] = true
             $value_var_name[] = new_val
             nothing
         end
 
-        getstate(::$node_type) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        @inline getstate(::$node_type) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
 
-        getstate(::Type{$node_type}) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        @inline getstate(::Type{$node_type}) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
 
-        getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        @inline getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
 
-        getstate(::Type{$node_type}, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        @inline getstate(::Type{$node_type}, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
 
-        setstate!(::$node_type, new_state::$(node_type |> statetype)) = begin
+        @inline setstate!(::$node_type, new_state::$(node_type |> statetype)) = begin
             $init_state_var_name[] = true
             $state_var_name[] = new_state
             nothing
         end
 
-        setstate!(::Type{$node_type}, new_state::$(node_type |> statetype)) = begin
+        @inline setstate!(::Type{$node_type}, new_state::$(node_type |> statetype)) = begin
             $init_state_var_name[] = true
             $state_var_name[] = new_state
             nothing
@@ -998,6 +1040,8 @@ materialize(nodes) = begin
 
     nothing
 end
+
+materialize(node::Node) = materialize([node])
 
 
 end
