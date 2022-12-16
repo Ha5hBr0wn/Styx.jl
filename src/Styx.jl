@@ -551,30 +551,6 @@ end
 end
 
 
-################ default values for types to keep type stability #################
-default(::Type{T}) where T <: Real = zero(T)
-
-default(::Type{String}) = ""
-
-default(::Type{Vector{T}}) where T = Vector{T}()
-
-default(::Type{CircularBuffer{T}}) where T = CircularBuffer{T}(0)
-
-default(::Type{T}) where T <: Tuple = map(default, T |> fieldtypes)
-
-default(::Type{Missing}) = missing
-
-default(::Type{Nothing}) = nothing
-
-default(::Type{Bool}) = false
-
-default(::Type{Char}) = '\0'
-
-default(::Type{T}) where T <: Function = T.instance
-
-default(::Type{T}) where T = T()
-
-
 
 ############### node type introspection valtype/statetype #################
 @inline valtype(::Type{T}) where T <: Node{V, S} where {V, S} = V
@@ -887,15 +863,15 @@ end
 
 
 generate_getset_node(node_type::DataType) = begin
-    value_var_name = gensym()
+    val_var_name = gensym()
     state_var_name = gensym()
     init_val_var_name = gensym()
     init_state_var_name = gensym()
     
     quote
-        const $value_var_name = Ref{$(node_type |> valtype)}($(node_type |> valtype |> default))
+        const $val_var_name = Ref{$(node_type |> valtype)}()
 
-        const $state_var_name = Ref{$(node_type |> statetype)}($(node_type |> statetype |> default))
+        const $state_var_name = Ref{$(node_type |> statetype)}()
 
         const $init_val_var_name = Ref{Bool}(false)
 
@@ -909,29 +885,29 @@ generate_getset_node(node_type::DataType) = begin
 
         @inline is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
-        @inline getval(::$node_type) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        @inline getval(::$node_type) = $init_val_var_name[] ? $val_var_name[] : error("can't access unintialized val")
 
-        @inline getval(::Type{$node_type}) = is_val_init($node_type) ? $value_var_name[] : error("can't access unintialized value")
+        @inline getval(::Type{$node_type}) = $init_val_var_name[] ? $val_var_name[] : error("can't access unintialized val")
 
-        @inline getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        @inline getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $val_var_name[] : default
 
-        @inline getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $value_var_name[] : default
+        @inline getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $val_var_name[] : default
 
         @inline setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
             $init_val_var_name[] = true
-            $value_var_name[] = new_val
+            $val_var_name[] = new_val
             nothing
         end
 
         @inline setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
             $init_val_var_name[] = true
-            $value_var_name[] = new_val
+            $val_var_name[] = new_val
             nothing
         end
 
-        @inline getstate(::$node_type) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        @inline getstate(::$node_type) = $init_state_var_name[] ? $state_var_name[] : error("can't access unintialized state")
 
-        @inline getstate(::Type{$node_type}) = is_state_init($node_type) ? $state_var_name[] : error("can't access unintialized state")
+        @inline getstate(::Type{$node_type}) = $init_state_var_name ? $state_var_name[] : error("can't access unintialized state")
 
         @inline getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
 

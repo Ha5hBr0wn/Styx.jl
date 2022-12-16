@@ -5,8 +5,7 @@ using Styx:
     Styx, FlowSource, CumulativeSum, valtype, 
     statetype, materialize, is_val_init, 
     is_state_init, flow!, getval, CumulativeProduct, 
-    default, Split, Sum, NoFlowSource, setval!, 
-    Collector, Combine
+    Split, Sum, NoFlowSource, setval!, Collector, Combine
 
 
 
@@ -15,16 +14,12 @@ struct RealBox{T <: Real}
     a::T
 end
 
-Styx.default(::Type{RealBox{T}}) where T = RealBox{T} |> zero
-
 Base.zero(::Type{RealBox{T}}) where T = RealBox{T}(T |> zero)
 Base.one(::Type{RealBox{T}}) where T = RealBox{T}(T |> one)
 Base.:+(x::RealBox{T}, y::RealBox{T}) where T = RealBox{T}(x.a + y.a)
 Base.:*(x::RealBox{T}, y::RealBox{T}) where T = RealBox{T}(x.a * y.a)
 Base.:+(x::RealBox{Int32}, y::RealBox{Float32}) = RealBox{Float16}(x.a + y.a)
 Base.:*(x::RealBox{Int32}, y::RealBox{Float32}) = RealBox{Float16}(x.a * y.a)
-
-
 
 
 
@@ -38,7 +33,7 @@ Base.:*(x::RealBox{Int32}, y::RealBox{Float32}) = RealBox{Float16}(x.a * y.a)
     @test valtype(cs) == Int64
     @test statetype(cs) == Missing
 
-    materialize([cs])
+    materialize([cs])  
 
     @test is_val_init(s) == false
     @test is_val_init(cs) == false
@@ -131,108 +126,114 @@ end
 
 
 
-# @testset "Sum" begin
-#     s = FlowSource(Tuple{Int64, Float64})
-#     x, y = Split(s)
-#     su = Sum(x, y)
+@testset "Sum" begin
+    s = FlowSource(Tuple{Int64, Float64})
+    x, y = Split(s)
+    su = Sum(x, y)
 
-#     materialize(su)
+    materialize(su)
 
-#     flow!(s, (2, 3.0))
+    flow!(s, (2, 3.0))
 
-#     @test getval(x) === 2
-#     @test getval(y) === 3.0
-#     @test getval(su) === 5.0
+    @test getval(x) === 2
+    @test getval(y) === 3.0
+    @test getval(su) === 5.0
 
-#     s2 = FlowSource(Tuple{Int32, Float32})
-#     x2, y2 = Split(s2)
-#     su2 = Sum(x2, y2)
+    s2 = FlowSource(Tuple{Int32, Float32})
+    x2, y2 = Split(s2)
+    su2 = Sum(x2, y2)
 
-#     materialize(su2)
+    materialize(su2)
 
-#     @test_throws Exception flow!(s2, (2, 3.0))
-#     flow!(s2, (2 |> Int32, 3.0 |> Float32))
+    @test_throws Exception flow!(s2, (2, 3.0))
+    flow!(s2, (2 |> Int32, 3.0 |> Float32))
 
-#     @test getval(su2) === Float32(5.0)
+    @test getval(su2) === Float32(5.0)
 
-#     s3 = FlowSource(Tuple{RealBox{Int32}, RealBox{Float32}})
-#     x3, y3 = Split(s3)
-#     su3 = Sum(RealBox{Float32}, x3, y3)
+    s3 = FlowSource(Tuple{RealBox{Int32}, RealBox{Float32}})
+    x3, y3 = Split(s3)
+    su3 = Sum(RealBox{Float32}, x3, y3)
 
-#     materialize(su3)
+    materialize(su3)
 
-#     @test_throws Exception flow!(s3, (RealBox(2 |> Int32), RealBox(3.0 |> Float32)))
+    @test_throws Exception flow!(s3, (RealBox(2 |> Int32), RealBox(3.0 |> Float32)))
 
-#     s4 = FlowSource(Tuple{RealBox{Int32}, RealBox{Float32}})
-#     x4, y4 = Split(s4)
-#     su4 = Sum(RealBox{Float16}, x4, y4)
+    s4 = FlowSource(Tuple{RealBox{Int32}, RealBox{Float32}})
+    x4, y4 = Split(s4)
+    su4 = Sum(RealBox{Float16}, x4, y4)
 
-#     materialize(su4)
+    materialize(su4)
 
-#     flow!(s4, (RealBox(2 |> Int32), RealBox(3.0 |> Float32)))
+    flow!(s4, (RealBox(2 |> Int32), RealBox(3.0 |> Float32)))
 
-#     @test getval(su4) === RealBox{Float16}(5.0)
+    @test getval(su4) === RealBox{Float16}(5.0)
 
-#     s5 = FlowSource(Int64)
-#     su5 = Sum(s5)
+    s5 = FlowSource(Int64)
+    su5 = Sum(s5)
 
-#     materialize(su5)
+    materialize(su5)
 
-#     flow!(s5, 10)
+    flow!(s5, 10)
 
-#     @test getval(su5) === 10
+    @test getval(su5) === 10
 
-#     flow!(s5, 5)
+    flow!(s5, 5)
 
-#     @test getval(su5) === 5
+    @test getval(su5) === 5
 
-#     s6 = FlowSource(Tuple{Int64, Float64, Float32})
-#     x6, y6, z6 = Split(s6)
-#     su6 = Sum(x6, y6, z6)
+    s6 = FlowSource(Tuple{Int64, Float64, Float32})
+    x6, y6, z6 = Split(s6)
+    su6 = Sum(x6, y6, z6)
 
-#     materialize(su6)
+    materialize(su6)
 
-#     flow!(s6, (2, 3.0, 10.0 |> Float32))
+    flow!(s6, (2, 3.0, 10.0 |> Float32))
 
-#     @test getval(su6) === 15.0
-#     @test getval(z6) === Float32(10.0)
-# end
+    @test getval(su6) === 15.0
+    @test getval(z6) === Float32(10.0)
+end
 
 
 
 ##################### Node Benchmark Sets ##########################
 
+# # Control
+# control_sum_benchmark(items) = begin
+#     v = Vector{Float64}(undef, length(items))
+#     for (i, item) in enumerate(items)
+#         v[i] = item[1] + item[2]
+#     end
+#     v
+# end
 
 
+# # Experiment
+# fs = FlowSource(Int64)
+# nfs = NoFlowSource(Float64)
+# s = Sum(fs, nfs)
+# materialize(s)
 
-# Control
-control_sum_benchmark(items) = begin
-    v = Vector{Float64}()
-    for item in items
-        push!(v, item[1] + item[2])
-    end
-    v
-end
+# flow_all_items!(fs, nfs, items) = begin
+#     for (i1, i2) in items
+#         setval!(nfs, i2)
+#         flow!(fs, i1)
+#     end
+# end
 
-# Experiment
-fs = FlowSource(Tuple{Int64, Float64})
-x, y = Split(fs)
-s = Sum(x, y)
-c = Collector(s)
-materialize(c)
+# # Setup
+# N = 1_000_000
+# items1 = rand(Int64, N)
+# items2 = rand(Float64, N)
+# items = [i for i in zip(items1, items2)]
 
-flow_all_items!(s, items) = begin
-    for item in items
-        flow!(s, item)
-    end
-end
+# # Benchmark
+# @btime flow_all_items!(fs, nfs, items) 
+# @btime control_sum_benchmark(items); 
 
-# Setup
-N = 1_000_000
-items1 = rand(Int64, N)
-items2 = rand(Float64, N)
-items = [i for i in zip(items1, items2)]
 
-# Benchmark
-@btime flow_all_items!(fs, items) # 7ms
-@btime control_sum_benchmark(items); # 5ms
+# New Features to Add:
+# Remove default method. Find a generic way to do this
+# Make each flow a transaction
+# Allow for creation of explicit checkpoints
+# Allow for creation of checkpoints on unhandled errors
+# Fully test and benchmark features
