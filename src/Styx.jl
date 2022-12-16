@@ -925,6 +925,7 @@ generate_getset_node(node_type::DataType) = begin
     end |> eval
 end
 
+
 wait_on_futures(future_var_names::Vector{Symbol}) = begin
     v = Vector{Expr}()
 
@@ -969,32 +970,56 @@ unroll_computation(top_sort::Vector{DataType}) = begin
 end
 
 
-generate_flow(source_type::DataType, top_sort::Vector{DataType}) = begin
-    quote 
-        flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
-            setval!(source, val)
-            $(top_sort |> unroll_computation)
-            nothing
-        end
+generate_flow(source_type::DataType, top_sort::Vector; checkpoint_interval=0, use_atomic_flow=false, checkpoint_on_error=false) = begin
+    if checkpoint_interval <= 0 && !use_atomic_flow
+        quote 
+            flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
+                setval!(source, val)
+                $(top_sort |> unroll_computation)
+                nothing
+            end
 
-        @inline flow!(source::$source_type, val::$(source_type |> valtype)) = flow!($source_type, val)
+            @inline flow!(::$source_type, val::$(source_type |> valtype)) = flow!($source_type, val)
+        end |> eval
 
+    else if checkpoint_interval <= 0 && use_atomic_flow && !checkpoint_on_error
+        quote 
+            flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
+                full_backup!(source)
+                try
+                    setval!(source, val)
+                    $(top_sort |> unroll_computation)
+                catch
+                    full_restore!(source)
+                    rethrow()
+                end
+                nothing
+            end
+
+            @inline flow!(::$source_type, val::$(source_type |> valtype)) = flow!($source_type, val)
+        end |> eval
+
+    else
+        error("Unsupported configuration")
+    end
+end
+
+
+generate_full_backup(source_type::DataType, top_sort::Vector{DataType}, disconnected_nodes::Set{DataType}) = begin
+    quote
+        full_backup!(source::Type{$source_type}) = nothing
+
+        full_backup!(::$source_type) = full_backup!($source_type)
     end |> eval
 end
 
 
-generate_code(comp_desc::Dict{DataType, Vector{DataType}}, disconnected_nodes::Set{DataType}) = begin
-    node_types = comp_desc |> comp_desc_to_node_type_set
+generate_full_restore(source_type::DataType, top_sort::Vector{DataType}, disconnected_nodes::Set{DataType}) = begin
+    quote
+        full_restore!(source::Type{$source_type}) = nothing
 
-    for node_type in union(node_types, disconnected_nodes)
-        generate_getset_node(node_type)
-    end
-
-    for (source_type, top_sort) in comp_desc        
-        generate_flow(source_type, top_sort)
-    end
-
-    nothing
+        full_restore!(::$source_type) = full_restore!($source_type)
+    end |> eval
 end
 
 
@@ -1010,7 +1035,49 @@ comp_desc_to_node_type_set(comp_desc::Dict) = begin
 end
 
 
-materialize(nodes) = begin
+generate_code(comp_desc::Dict, disconnected_nodes::Set; checkpoint_interval=0, use_atomic_flow=false, checkpoint_on_error=false) = begin
+    node_types = comp_desc |> comp_desc_to_node_type_set
+
+    for node_type in union(node_types, disconnected_nodes)
+        generate_getset_node(node_type)
+    end
+
+    for (source_type, top_sort) in comp_desc 
+        if use_atomic_flow
+            generate_full_backup(source_type, top_sort, disconnected_nodes)       
+            generate_full_restore(source_type, top_sort, disconnected_nodes)
+        end
+        generate_flow(source_type, top_sort; checkpoint_interval, use_atomic_flow, checkpoint_on_error)
+    end
+
+    nothing
+end
+
+
+verify_atomic(node_type::DataType) = begin
+    hasmethod(rev_calc, Tuple{node_type}) ||
+    ((valtype(node_type) |> isbitstype) && (statetype(node_type) |> isbitstype)) ||
+    error("$node_type can not be used in atomic operations")
+end
+
+verify_atomic(top_sort::Vector) = begin
+    for node_type in top_sort
+        verify_atomic(node_type)
+    end
+end
+
+verify_atomic(comp_desc::Dict) = begin
+    for top_sort in values(comp_desc)
+        verify_atomic(top_sort)
+    end
+end
+
+
+materialize(nodes; checkpoint_interval::Int64 = -1, use_atomic_flow::Bool = false, checkpoint_on_error::Bool = false) = begin
+    # Check kwarg consistency
+    @assert !checkpoint_on_error || use_atomic_flow
+    
+    # Map all nodes to their types
     node_types = map(nodes) do n
         if n isa Node || n isa Tuple
             n |> typeof
@@ -1019,13 +1086,22 @@ materialize(nodes) = begin
         end
     end
 
+    # Organize type DAG
     comp_desc, disconnected_nodes = build_dag(node_types)
-    generate_code(comp_desc, disconnected_nodes)
+
+    # Verify atomic operations are possible 
+    if use_atomic_flow
+        verify_atomic(comp_desc)
+    end
+
+    # Generate all requried code
+    generate_code(comp_desc, disconnected_nodes; checkpoint_interval, use_atomic_flow, checkpoint_on_error)
 
     nothing
 end
 
-materialize(node::Node) = materialize([node])
-
+materialize(node::Node; checkpoint_interval=0, use_atomic_flow=false, checkpoint_on_error=false) = begin
+    materialize([node]; checkpoint_interval, use_atomic_flow, checkpoint_on_error)
+end
 
 end

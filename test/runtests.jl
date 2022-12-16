@@ -208,15 +208,15 @@ end
 
 
 # Experiment
-fs = FlowSource(Int64)
-nfs = NoFlowSource(Float64)
-s = Sum(fs, nfs)
-materialize(s)
+fs = FlowSource(Tuple{Int64, Float64})
+x, y = Split(fs)
+s = Sum(x, y)
+c = Collector(s)
+materialize(c)
 
-flow_all_items!(fs, nfs, items) = begin
-    for (i1, i2) in items
-        setval!(nfs, i2)
-        flow!(fs, i1)
+flow_all_items!(fs, items) = begin
+    for item in items
+        flow!(fs, item)
     end
 end
 
@@ -227,13 +227,15 @@ items2 = rand(Float64, N)
 items = [i for i in zip(items1, items2)]
 
 # Benchmark
-@btime flow_all_items!(fs, nfs, items) 
+@btime flow_all_items!(fs, items) 
 @btime control_sum_benchmark(items); 
 
 
 # New Features to Add:
-# Make each flow a transaction
+# Make each flow a transaction if possible
 # Allow for creation of explicit checkpoints
 # Allow for creation of checkpoints on unhandled errors
+# Allow for creation of checkpoint after every N flows automatically
 # Factor into multiple files
+# Better error messages
 # Fully test and benchmark features
