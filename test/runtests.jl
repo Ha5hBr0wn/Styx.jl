@@ -211,8 +211,7 @@ end
 fs = FlowSource(Tuple{Int64, Float64})
 x, y = Split(fs)
 s = Sum(x, y)
-c = Collector(s)
-materialize(c)
+materialize(s)
 
 flow_all_items!(fs, items) = begin
     for item in items
@@ -232,7 +231,6 @@ items = [i for i in zip(items1, items2)]
 
 
 # New Features to Add:
-# Make each flow a transaction if possible
 # Allow for creation of explicit checkpoints
 # Allow for creation of checkpoints on unhandled errors
 # Allow for creation of checkpoint after every N flows automatically

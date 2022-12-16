@@ -265,13 +265,17 @@ StdDev(n::Node) = Pow(
 end
 
 @inline calc(n::Async{T}) where T = begin
+    # Calc the underlying sync node
     calc(T())
+
+    # Update val and state of async node
     if is_val_init(T)
         setval!(n, T |> getval)
     end
     if is_state_init(T)
         setstate!(n, T |> getstate)
     end
+
     nothing
 end
 
@@ -552,6 +556,11 @@ end
 
 
 
+################## node rev calcs ####################
+rev_calc(n::Collector{T}) where T = nothing
+
+
+
 ############### node type introspection valtype/statetype #################
 @inline valtype(::Type{T}) where T <: Node{V, S} where {V, S} = V
 
@@ -604,6 +613,18 @@ end
 
 
 @inline flow!(_, _) = error("Undefined method")
+
+
+@inline backup!(_) = error("Undefined method")
+
+
+@inline restore!(_) = error("Undefined method") 
+
+
+@inline full_backup!(_) = error("Undefined method")
+
+
+@inline full_restore!(_) = error("Undefined method")
 
 
 
@@ -982,7 +1003,7 @@ generate_flow(source_type::DataType, top_sort::Vector; checkpoint_interval=0, us
             @inline flow!(::$source_type, val::$(source_type |> valtype)) = flow!($source_type, val)
         end |> eval
 
-    else if checkpoint_interval <= 0 && use_atomic_flow && !checkpoint_on_error
+    elseif checkpoint_interval <= 0 && use_atomic_flow && !checkpoint_on_error
         quote 
             flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
                 full_backup!(source)
@@ -1005,20 +1026,56 @@ generate_flow(source_type::DataType, top_sort::Vector; checkpoint_interval=0, us
 end
 
 
-generate_full_backup(source_type::DataType, top_sort::Vector{DataType}, disconnected_nodes::Set{DataType}) = begin
-    quote
-        full_backup!(source::Type{$source_type}) = nothing
+unroll_backup(top_sort::Vector) = begin
+    v = Vector{Expr}()
 
-        full_backup!(::$source_type) = full_backup!($source_type)
+    for node_type in top_sort
+        expr = quote backup!($node_type) end
+        push!(v, expr)
+    end
+
+    Expr(:block, v...)
+end
+
+
+generate_full_backup(source_type::DataType, top_sort::Vector) = begin
+    quote
+        full_backup!(::Type{$source_type}) = begin
+            $(top_sort |> unroll_backup)
+        end
+
+        @inline full_backup!(::$source_type) = full_backup!($source_type)
     end |> eval
 end
 
 
-generate_full_restore(source_type::DataType, top_sort::Vector{DataType}, disconnected_nodes::Set{DataType}) = begin
-    quote
-        full_restore!(source::Type{$source_type}) = nothing
+unroll_restore(top_sort::Vector) = begin
+    v = Vector{Expr}()
 
-        full_restore!(::$source_type) = full_restore!($source_type)
+    for node_type in top_sort
+        if hasmethod(rev_calc, Tuple{node_type})
+            expr = quote 
+                restore!($node_type)
+                $(node_type()) |> rev_calc 
+            end
+        else
+            expr = quote restore!($node_type) end
+        end
+
+        push!(v, expr)
+    end
+
+    Expr(:block, v...)
+end
+
+
+generate_full_restore(source_type::DataType, top_sort::Vector{DataType}) = begin
+    quote
+        full_restore!(::Type{$source_type}) = begin
+            $(top_sort |> unroll_restore)
+        end
+
+        @inline full_restore!(::$source_type) = full_restore!($source_type)
     end |> eval
 end
 
@@ -1044,8 +1101,8 @@ generate_code(comp_desc::Dict, disconnected_nodes::Set; checkpoint_interval=0, u
 
     for (source_type, top_sort) in comp_desc 
         if use_atomic_flow
-            generate_full_backup(source_type, top_sort, disconnected_nodes)       
-            generate_full_restore(source_type, top_sort, disconnected_nodes)
+            generate_full_backup(source_type, top_sort)       
+            generate_full_restore(source_type, top_sort)
         end
         generate_flow(source_type, top_sort; checkpoint_interval, use_atomic_flow, checkpoint_on_error)
     end
@@ -1055,6 +1112,8 @@ end
 
 
 verify_atomic(node_type::DataType) = begin
+    !(node_type <: Async) || error("node_type cannot be used in atomic operations")
+
     hasmethod(rev_calc, Tuple{node_type}) ||
     ((valtype(node_type) |> isbitstype) && (statetype(node_type) |> isbitstype)) ||
     error("$node_type can not be used in atomic operations")
