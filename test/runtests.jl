@@ -197,43 +197,43 @@ end
 
 ##################### Node Benchmark Sets ##########################
 
-# # Control
-# control_sum_benchmark(items) = begin
-#     v = Vector{Float64}(undef, length(items))
-#     for (i, item) in enumerate(items)
-#         v[i] = item[1] + item[2]
-#     end
-#     v
-# end
+# Control
+control_sum_benchmark(items) = begin
+    v = Vector{Float64}(undef, length(items))
+    for (i, item) in enumerate(items)
+        v[i] = item[1] + item[2]
+    end
+    v
+end
 
 
-# # Experiment
-# fs = FlowSource(Int64)
-# nfs = NoFlowSource(Float64)
-# s = Sum(fs, nfs)
-# materialize(s)
+# Experiment
+fs = FlowSource(Int64)
+nfs = NoFlowSource(Float64)
+s = Sum(fs, nfs)
+materialize(s)
 
-# flow_all_items!(fs, nfs, items) = begin
-#     for (i1, i2) in items
-#         setval!(nfs, i2)
-#         flow!(fs, i1)
-#     end
-# end
+flow_all_items!(fs, nfs, items) = begin
+    for (i1, i2) in items
+        setval!(nfs, i2)
+        flow!(fs, i1)
+    end
+end
 
-# # Setup
-# N = 1_000_000
-# items1 = rand(Int64, N)
-# items2 = rand(Float64, N)
-# items = [i for i in zip(items1, items2)]
+# Setup
+N = 1_000_000
+items1 = rand(Int64, N)
+items2 = rand(Float64, N)
+items = [i for i in zip(items1, items2)]
 
-# # Benchmark
-# @btime flow_all_items!(fs, nfs, items) 
-# @btime control_sum_benchmark(items); 
+# Benchmark
+@btime flow_all_items!(fs, nfs, items) 
+@btime control_sum_benchmark(items); 
 
 
 # New Features to Add:
-# Remove default method. Find a generic way to do this
 # Make each flow a transaction
 # Allow for creation of explicit checkpoints
 # Allow for creation of checkpoints on unhandled errors
+# Factor into multiple files
 # Fully test and benchmark features

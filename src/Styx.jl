@@ -827,56 +827,29 @@ end
 
 
 ##################### implicitly generate required methods ########################
-generate_getset_source(comp_desc::Dict{DataType, Vector{DataType}}, node_types::Set{DataType}) = begin
-    flow_source_types = [t for t in keys(comp_desc)]
-    global_flowing_source_var_name = gensym()
-    
-    quote
-        const $global_flowing_source_var_name = Ref{Union{$(flow_source_types...)}}($(flow_source_types |> rand)())
-
-        @inline getsource(::T) where T <: Union{$(node_types...)} = $global_flowing_source_var_name[]
-
-        @inline getsource(::Type{T}) where T <: Union{$(node_types)...} = $global_flowing_source_var_name[]
-
-        @inline setsource!(::T, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
-            $global_flowing_source_var_name[] = s
-            nothing
-        end
-
-        @inline setsource!(::Type{T}, s::U) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
-            $global_flowing_source_var_name[] = s
-            nothing
-        end
-
-        @inline setsource!(::T, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
-            $global_flowing_source_var_name[] = U()
-            nothing
-        end 
-
-        @inline setsource!(::Type{T}, ::Type{U}) where T <: Union{$(node_types...)} where U <: Union{$(flow_source_types...)} = begin
-            $global_flowing_source_var_name[] = U()
-            nothing
-        end
-
-    end |> eval
-end
-
-
 generate_getset_node(node_type::DataType) = begin
     val_var_name = gensym()
     state_var_name = gensym()
     init_val_var_name = gensym()
     init_state_var_name = gensym()
+
+    backup_val_var_name = gensym()
+    backup_state_var_name = gensym()
+    backup_init_val_var_name = gensym()
+    backup_init_state_var_name = gensym()
     
     quote
+        # Define variables
         const $val_var_name = Ref{$(node_type |> valtype)}()
 
         const $state_var_name = Ref{$(node_type |> statetype)}()
 
         const $init_val_var_name = Ref{Bool}(false)
 
-        const $init_state_var_name = Ref{Bool}(false)
-
+        const $init_state_var_name = Ref{Bool}(false)                    
+            
+        
+        # Check if initialized
         @inline is_val_init(::$node_type) = $init_val_var_name[]
 
         @inline is_val_init(::Type{$node_type}) = $init_val_var_name[]
@@ -885,19 +858,15 @@ generate_getset_node(node_type::DataType) = begin
 
         @inline is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
-        @inline getval(::$node_type) = $init_val_var_name[] ? $val_var_name[] : error("can't access unintialized val")
-
+        
+        # Get and set val
         @inline getval(::Type{$node_type}) = $init_val_var_name[] ? $val_var_name[] : error("can't access unintialized val")
 
-        @inline getval(::$node_type, default::$(node_type |> valtype)) = is_val_init($node_type) ? $val_var_name[] : default
+        @inline getval(::$node_type) = getval($node_type)
 
         @inline getval(::Type{$node_type}, default::$(node_type |> valtype)) = is_val_init($node_type) ? $val_var_name[] : default
 
-        @inline setval!(::$node_type, new_val::$(node_type |> valtype)) = begin
-            $init_val_var_name[] = true
-            $val_var_name[] = new_val
-            nothing
-        end
+        @inline getval(::$node_type, default::$(node_type |> valtype)) = getval($node_type, default)
 
         @inline setval!(::Type{$node_type}, new_val::$(node_type |> valtype)) = begin
             $init_val_var_name[] = true
@@ -905,25 +874,53 @@ generate_getset_node(node_type::DataType) = begin
             nothing
         end
 
-        @inline getstate(::$node_type) = $init_state_var_name[] ? $state_var_name[] : error("can't access unintialized state")
+        @inline setval!(::$node_type, new_val::$(node_type |> valtype)) = setval!($node_type, new_val)
 
-        @inline getstate(::Type{$node_type}) = $init_state_var_name ? $state_var_name[] : error("can't access unintialized state")
 
-        @inline getstate(::$node_type, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        # Get and set state
+        @inline getstate(::Type{$node_type}) = $init_state_var_name[] ? $state_var_name[] : error("can't access unintialized state")
 
-        @inline getstate(::Type{$node_type}, default::$(node_type |> statetype)) = is_state_init($node_type) ? $state_var_name[] : default
+        @inline getstate(::$node_type) = getstate($node_type)
 
-        @inline setstate!(::$node_type, new_state::$(node_type |> statetype)) = begin
-            $init_state_var_name[] = true
-            $state_var_name[] = new_state
-            nothing
-        end
+        @inline getstate(::Type{$node_type}, default::$(node_type |> statetype)) = $init_state_var_name[] ? $state_var_name[] : default
+
+        @inline getstate(::$node_type, default::$(node_type |> statetype)) = getstate($node_type, default)
 
         @inline setstate!(::Type{$node_type}, new_state::$(node_type |> statetype)) = begin
             $init_state_var_name[] = true
             $state_var_name[] = new_state
             nothing
         end
+
+        @inline setstate!(::$node_type, new_state::$(node_type |> statetype)) = setstate!($node_type, new_state)
+
+        
+        # Backup and restore
+        const $backup_val_var_name = Ref{$(node_type |> valtype)}()
+        
+        const $backup_state_var_name = Ref{$(node_type |> statetype)}()
+        
+        const $backup_init_val_var_name = Ref{Bool}(false)
+        
+        const $backup_init_state_var_name = Ref{Bool}(false)
+
+        @inline backup!(::Type{$node_type}) = begin
+            $backup_val_var_name[] = $val_var_name[]
+            $backup_state_var_name[] = $state_var_name[]
+            $backup_init_val_var_name[] = $init_val_var_name[]
+            $backup_init_state_var_name[] = $init_state_var_name[]
+        end
+
+        @inline backup!(::$node_type) = backup!($node_type)
+
+        @inline restore!(::Type{$node_type}) = begin
+            $val_var_name[] = $backup_val_var_name[]
+            $state_var_name[] = $backup_state_var_name[]
+            $init_val_var_name[] = $backup_init_val_var_name[]
+            $init_state_var_name[] = $backup_init_state_var_name[]
+        end
+
+        @inline restore!(::$node_type) = restore!($node_type)
 
     end |> eval
 end
@@ -974,19 +971,14 @@ end
 
 generate_flow(source_type::DataType, top_sort::Vector{DataType}) = begin
     quote 
-        flow!(source::$source_type, val::$(source_type |> valtype)) = begin
-            setsource!(source, source)
+        flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
             setval!(source, val)
             $(top_sort |> unroll_computation)
             nothing
         end
 
-        flow!(source::Type{$source_type}, val::$(source_type |> valtype)) = begin
-            setsource!(source, source)
-            setval!(source, val)
-            $(top_sort |> unroll_computation)
-            nothing
-        end
+        @inline flow!(source::$source_type, val::$(source_type |> valtype)) = flow!($source_type, val)
+
     end |> eval
 end
 
@@ -994,13 +986,11 @@ end
 generate_code(comp_desc::Dict{DataType, Vector{DataType}}, disconnected_nodes::Set{DataType}) = begin
     node_types = comp_desc |> comp_desc_to_node_type_set
 
-    generate_getset_source(comp_desc, node_types)
-
     for node_type in union(node_types, disconnected_nodes)
         generate_getset_node(node_type)
     end
 
-    for (source_type, top_sort) in comp_desc
+    for (source_type, top_sort) in comp_desc        
         generate_flow(source_type, top_sort)
     end
 
