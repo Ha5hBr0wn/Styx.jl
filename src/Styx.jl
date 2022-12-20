@@ -385,7 +385,6 @@ end
         v = n |> getval
         next_val = T |> getval
         push!(v, next_val)
-        setval!(n, v)
     end
     nothing
 end
@@ -401,7 +400,6 @@ end
         if condition(next_val)
             push!(v, next_val)
         end
-        setval!(n, v)
     end
     nothing
 end
@@ -557,7 +555,38 @@ end
 
 
 ################## node rev calcs ####################
-rev_calc(n::Collector{T}) where T = nothing
+rev_calc(n::Collector{T}) where T = begin
+    if is_val_init(n)
+        v = getval(n)
+        if is_finish_calc(n)
+            pop!(v)
+        else
+            error("rev_calc failure: $(n |> typeof)")
+        end
+    end
+
+    nothing
+end
+
+
+rev_calc(n::ConditionalCollector{T, U}) where {T, U} = begin
+    if is_val_init(n)
+        v = getval(n)
+
+        if is_finish_calc(n)
+            ele = getval(T)
+            condition = U.instance
+
+            if condition(ele)
+                pop!(v)
+            end
+        else
+            error("rev_calc failure: $(n |> typeof)")
+        end
+    end
+
+    nothing
+end
 
 
 
