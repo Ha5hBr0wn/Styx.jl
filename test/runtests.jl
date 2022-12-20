@@ -5,7 +5,8 @@ using Styx:
     Styx, FlowSource, CumulativeSum, valtype, 
     statetype, materialize, is_val_init, 
     is_state_init, flow!, getval, CumulativeProduct, 
-    Split, Sum, NoFlowSource, setval!, Collector, Combine
+    Split, Sum, NoFlowSource, setval!, Collector, Combine, 
+    Maximum, SimpleEMA
 
 
 
@@ -211,7 +212,9 @@ end
 fs = FlowSource(Tuple{Int64, Float64})
 x, y = Split(fs)
 s = Sum(x, y)
-materialize(s)
+m = Maximum(s)
+ema = SimpleEMA(s, 0.01)
+materialize([m, ema]; use_atomic_flow=true)
 
 flow_all_items!(fs, items) = begin
     for item in items

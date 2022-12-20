@@ -848,16 +848,21 @@ end
 
 
 ##################### implicitly generate required methods ########################
-generate_getset_node(node_type::DataType) = begin
+struct SuccessfulRestoreException{T <: Exception} <: Exception
+    e :: T
+end
+
+
+Base.show(io::IO, e::SuccessfulRestoreException) = begin
+    print(io, "SuccessfulRestoreException($(e.e))")
+end
+
+
+generate_getset_node(node_type::DataType; use_atomic_flow=false) = begin
     val_var_name = gensym()
     state_var_name = gensym()
     init_val_var_name = gensym()
     init_state_var_name = gensym()
-
-    backup_val_var_name = gensym()
-    backup_state_var_name = gensym()
-    backup_init_val_var_name = gensym()
-    backup_init_state_var_name = gensym()
     
     quote
         # Define variables
@@ -871,13 +876,13 @@ generate_getset_node(node_type::DataType) = begin
             
         
         # Check if initialized
+        @inline is_val_init(::Type{$node_type}) = $init_val_var_name[]
+        
         @inline is_val_init(::$node_type) = $init_val_var_name[]
 
-        @inline is_val_init(::Type{$node_type}) = $init_val_var_name[]
+        @inline is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
         @inline is_state_init(::$node_type) = $init_state_var_name[]
-
-        @inline is_state_init(::Type{$node_type}) = $init_state_var_name[]
 
         
         # Get and set val
@@ -915,35 +920,79 @@ generate_getset_node(node_type::DataType) = begin
 
         @inline setstate!(::$node_type, new_state::$(node_type |> statetype)) = setstate!($node_type, new_state)
 
-        
-        # Backup and restore
-        const $backup_val_var_name = Ref{$(node_type |> valtype)}()
-        
-        const $backup_state_var_name = Ref{$(node_type |> statetype)}()
-        
-        const $backup_init_val_var_name = Ref{Bool}(false)
-        
-        const $backup_init_state_var_name = Ref{Bool}(false)
-
-        @inline backup!(::Type{$node_type}) = begin
-            $backup_val_var_name[] = $val_var_name[]
-            $backup_state_var_name[] = $state_var_name[]
-            $backup_init_val_var_name[] = $init_val_var_name[]
-            $backup_init_state_var_name[] = $init_state_var_name[]
-        end
-
-        @inline backup!(::$node_type) = backup!($node_type)
-
-        @inline restore!(::Type{$node_type}) = begin
-            $val_var_name[] = $backup_val_var_name[]
-            $state_var_name[] = $backup_state_var_name[]
-            $init_val_var_name[] = $backup_init_val_var_name[]
-            $init_state_var_name[] = $backup_init_state_var_name[]
-        end
-
-        @inline restore!(::$node_type) = restore!($node_type)
-
     end |> eval
+
+    if use_atomic_flow
+        backup_val_var_name = gensym()
+        backup_state_var_name = gensym()
+        backup_init_val_var_name = gensym()
+        backup_init_state_var_name = gensym()
+
+        quote
+            # Backup and restore
+            const $backup_val_var_name = Ref{$(node_type |> valtype)}()
+            
+            const $backup_state_var_name = Ref{$(node_type |> statetype)}()
+            
+            const $backup_init_val_var_name = Ref{Bool}(false)
+            
+            const $backup_init_state_var_name = Ref{Bool}(false)
+
+            @inline backup!(::Type{$node_type}) = begin
+                $backup_val_var_name[] = $val_var_name[]
+                $backup_state_var_name[] = $state_var_name[]
+                $backup_init_val_var_name[] = $init_val_var_name[]
+                $backup_init_state_var_name[] = $init_state_var_name[]
+            end
+
+            @inline backup!(::$node_type) = backup!($node_type)
+
+            @inline restore!(::Type{$node_type}) = begin
+                $val_var_name[] = $backup_val_var_name[]
+                $state_var_name[] = $backup_state_var_name[]
+                $init_val_var_name[] = $backup_init_val_var_name[]
+                $init_state_var_name[] = $backup_init_state_var_name[]
+            end
+
+            @inline restore!(::$node_type) = restore!($node_type)
+
+        end |> eval
+    end
+
+    if use_atomic_flow && node_type <: AbstractComputation
+        start_calc_var_name = gensym()
+        finish_calc_var_name = gensym()
+        
+        quote
+            # Get and set start/finish calc
+            const $start_calc_var_name = Ref{Bool}(false)
+
+            const $finish_calc_var_name = Ref{Bool}(false)       
+
+            @inline is_start_calc(::Type{$node_type}) = $start_calc_var_name[]
+
+            @inline is_start_calc(::$node_type) = $start_calc_var_name[]
+
+            @inline is_finish_calc(::Type{$node_type}) = $finish_calc_var_name[]
+
+            @inline is_finish_calc(::$node_type) = $finish_calc_var_name[]
+
+            @inline start_calc(::Type{$node_type}) = $start_calc_var_name[] = true
+
+            @inline start_calc(::$node_type) = $start_calc_var_name[] = true
+
+            @inline finish_calc(::Type{$node_type}) = $finish_calc_var_name[] = true
+
+            @inline finish_calc(::$node_type) = $finish_calc_var_name[] = true
+
+            @inline reset_calc_status(::Type{$node_type}) = $start_calc_var_name[] = begin
+                $start_calc_var_name[] = false
+                $finish_calc_var_name[] = false
+            end
+
+            @inline reset_calc_status(::$node_type) = reset_calc_status($node_type)
+        end |> eval
+    end
 end
 
 
@@ -976,17 +1025,34 @@ unroll_computation(top_sort::Vector{DataType}) = begin
             push!(future_var_names, future_var_name)
 
             expr = quote
-                $future_var_name = Threads.@spawn calc($node_type())
+                $future_var_name = Threads.@spawn calc($(node_type()))
             end
         else
             expr = quote
-                calc($node_type())
+                calc($(node_type()))
             end
         end
 
         push!(v, expr)
     end
     
+    Expr(:block, v...)
+end
+
+
+unroll_atomic_computation(top_sort::Vector{DataType}) = begin
+    v = Vector{Expr}()
+
+    for node_type in top_sort[2:end]
+        expr = quote
+            start_calc($node_type)
+            calc($(node_type()))
+            finish_calc($node_type)
+        end
+
+        push!(v, expr)
+    end
+
     Expr(:block, v...)
 end
 
@@ -1009,10 +1075,10 @@ generate_flow(source_type::DataType, top_sort::Vector; checkpoint_interval=0, us
                 full_backup!(source)
                 try
                     setval!(source, val)
-                    $(top_sort |> unroll_computation)
-                catch
+                    $(top_sort |> unroll_atomic_computation)
+                catch e
                     full_restore!(source)
-                    rethrow()
+                    throw(SuccessfulRestoreException(e))
                 end
                 nothing
             end
@@ -1052,18 +1118,28 @@ end
 unroll_restore(top_sort::Vector) = begin
     v = Vector{Expr}()
 
-    for node_type in top_sort
+    # Don't need to worry about AsyncGroupStart/End and also will handle source node separately
+    for node_type in reverse(top_sort[2:end])
         if hasmethod(rev_calc, Tuple{node_type})
             expr = quote 
-                restore!($node_type)
-                $(node_type()) |> rev_calc 
+                if is_start_calc($node_type)
+                    restore!($node_type)
+                    $(node_type()) |> rev_calc 
+                end
             end
         else
-            expr = quote restore!($node_type) end
+            expr = quote 
+                if is_start_calc($node_type)
+                    restore!($node_type) 
+                end
+            end
         end
 
         push!(v, expr)
     end
+
+    # Restore the source (not a calc-able node)
+    push!(v, :(restore!($(top_sort[1]))))
 
     Expr(:block, v...)
 end
@@ -1080,6 +1156,30 @@ generate_full_restore(source_type::DataType, top_sort::Vector{DataType}) = begin
 end
 
 
+unroll_reset_calc_status(top_sort::Vector) = begin
+    v = Vector{Expr}()
+
+    # Don't need to worry about AsyncGroupStart or End here because it wouldn't pass verify_atomic
+    for node_type in top_sort[2:end] 
+        expr = quote reset_calc_status($node_type) end
+        push!(v, expr)
+    end
+
+    Expr(:block, v...)
+end
+
+
+generate_full_reset_calc_status(source_type::DataType, top_sort::Vector{DataType}) = begin
+    quote
+        full_reset_calc_status!(::Type{$source_type}) = begin
+            $(top_sort) |> unroll_reset_calc_status
+        end
+
+        @inline full_reset_calc_status!(::$source_type) = full_reset_calc_status!($source_type)
+    end
+end
+
+
 comp_desc_to_node_type_set(comp_desc::Dict) = begin
     node_types = Set{DataType}()
     
@@ -1093,14 +1193,15 @@ end
 
 
 generate_code(comp_desc::Dict, disconnected_nodes::Set; checkpoint_interval=0, use_atomic_flow=false, checkpoint_on_error=false) = begin
-    node_types = comp_desc |> comp_desc_to_node_type_set
+    node_types = comp_desc |> comp_desc_to_node_type_set # Doesn't include AsyncGroupStart/End
 
     for node_type in union(node_types, disconnected_nodes)
-        generate_getset_node(node_type)
+        generate_getset_node(node_type; use_atomic_flow)
     end
 
     for (source_type, top_sort) in comp_desc 
         if use_atomic_flow
+            generate_full_reset_calc_status(source_type, top_sort)
             generate_full_backup(source_type, top_sort)       
             generate_full_restore(source_type, top_sort)
         end
